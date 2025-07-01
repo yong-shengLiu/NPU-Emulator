@@ -5,6 +5,37 @@ import struct
 import torch
 
 
+def float_to_q4_11(value):
+    """
+    Convert a float to Q4.11 fixed-point (signed 16-bit)
+    """
+    scale = 2**11  # fractional resolution
+    max_val = 15.9995
+    min_val = -16.0
+
+    # Saturate to range
+    value = max(min_val, min(max_val, value))
+
+    # Convert to fixed-point integer
+    fixed_val = int(round(value * scale))
+
+    # Convert to 16-bit signed int (simulate overflow behavior)
+    if fixed_val < 0:
+        fixed_val = (1 << 16) + fixed_val  # two's complement
+
+    return fixed_val
+
+
+def q4_11_to_float(fixed_val):
+    """
+    Convert Q4.11 fixed-point back to float
+    """
+    if fixed_val & (1 << 15):  # negative number in two's complement
+        fixed_val = fixed_val - (1 << 16)
+
+    return fixed_val / (2**11)
+
+
 def sigmoid(x):
     return 1/(1+np.exp(-x))
 
@@ -31,17 +62,21 @@ def softmax_test_patterns():
         np.array([1.0, 1.01, 1.02, 1.03]),               #  2: small range
         np.array([1.0, 5.0, 30.0, 100.0]),               #  3: large range
         np.array([-10.0, -20.0, -30.0]),                 #  4: underflow test
-        np.array([-1.2, 0.0, 1.2]),                      #  5: centered
+        # np.array([-1.2, 0.0, 1.2]),                      #  5: centered
         np.array([0.0, 0.0, 0.0, 10.0]),                 #  6: one-hot
         np.random.normal(0, 1, 64),                      #  7: normal
         np.random.uniform(-5, 5, 64),                    #  8: uniform
-        # np.array([0, 128, 255], dtype=np.uint8),         #  9: quantization range
-        np.array([0.00001, 0.00002, 0.00003])            # 10: soft rounding
+        # np.array([0.00001, 0.00002, 0.00003])            #  9: soft rounding
     ]
 
 
 def SoftMax(x):
-
+    """
+    NOTE: Hardware benchmark list
+    (1) SoftMax_1: the exponentials used quantization and linear approximation, the summation is rounded to the nearest power of 2
+    (2) SoftMax_2: the exponentials used quantization and linear approximation, and the division is done by Fast Inverse Square Root (FISR)
+    (3) SoftMax_3: Cordic
+    """
     maximum = np.max(x)
 
     diff = x - maximum
@@ -55,25 +90,96 @@ def SoftMax(x):
     return softmax_x
 
 
-def SoftMax_hard(x):
-
+def SoftMax_1(x):
+    """
+    NOTE:
+    (1) the exponentials used quantization and linear approximation
+    (2) the summation is rounded to the nearest power of 2
+    TODO: Need to Consider the datatype
+    """
     maximum = np.max(x)
 
     diff = x - maximum
-    print("diff:", diff)
+    # print("diff:", diff)
 
 
     # quantize the exponentials
+    log2e = 1.5
+    int_frac = diff * log2e
 
+    # print("int_frac:", int_frac)
+
+    frac_part, int_part = np.modf(int_frac)
+    # print("frac_part:", frac_part, "int_part:", int_part)
+
+    frac_approximated = frac_part / 2 + 1  # linear approximation
+    # print("frac_approximated:", frac_approximated)
+
+    exp_approximated = np.power(2, int_part) * frac_approximated
+    # print("exp_approximated:", exp_approximated, "exp: ", np.exp(diff))
+
+    # print(f'Error: {MSE(np.exp(diff), exp_approximated)}')
+
+
+    # Summation of exponentials
+    summation = np.sum(exp_approximated)
+    print("Exp. summation:", summation)
+    
+    # rounde the summation to the nearest power of 2
+    summation_rounded = 2 ** np.round(np.log2(summation))
+    print("Exp. summation_rounded:", summation_rounded)
 
     # divide by the FastInverse Square Root (FISR)
 
-    softmax_x = 0
+    softmax_x = exp_approximated / summation_rounded
     return softmax_x
+
+def SoftMax_2(x):
+    """
+    NOTE:
+    (1) the exponentials used quantization and linear approximation
+    (2) the division is done by Fast Inverse Square Root (FISR)
+    TODO: Need to Consider the datatype
+    """
+    maximum = np.max(x)
+
+    diff = x - maximum
+    # print("diff:", diff)
+
+
+    # quantize the exponentials
+    log2e = 1.5
+    int_frac = diff * log2e
+
+    # print("int_frac:", int_frac)
+
+    frac_part, int_part = np.modf(int_frac)
+    # print("frac_part:", frac_part, "int_part:", int_part)
+
+    frac_approximated = frac_part / 2 + 1  # linear approximation
+    # print("frac_approximated:", frac_approximated)
+
+    exp_approximated = np.power(2, int_part) * frac_approximated
+    # print("exp_approximated:", exp_approximated, "exp: ", np.exp(diff))
+
+    # print(f'Error: {MSE(np.exp(diff), exp_approximated)}')
+
+
+    # Summation of exponentials
+    summation = np.sum(exp_approximated)
+    print("Exp. summation:", summation)
+    
+    # divide by the FastInverse Square Root (FISR)
+    softmax_x = exp_approximated * FISR((summation**2), 3)
+
+    return softmax_x
+
+
+
+
 
 def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
-
 
 def gelu(x):
     return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
@@ -147,29 +253,72 @@ def MSE(golden, prediction):
     if mse == 0:
         accuracy = float('inf')  # Perfect match
         print("Perfect match!")
+        loss = 0
     else:
         accuracy = math.log10(1 / mse)
+        loss = mse
 
-    return accuracy
+    return loss
 
 
 if __name__ == "__main__":
     print("=== SFU testbench ===")
 
     # x = np.linspace(-10, 10)
-    # plt.plot(x, layer_norm(x))
+    # plt.plot(x, SoftMax(x))
     # plt.axis('tight')
     # plt.title('Activation Function :GELU')
     # plt.show()
 
+    # Store results
+    mse_1_list = []
+    mse_2_list = []
 
     test_cases = softmax_test_patterns()
 
     for idx, x in enumerate(test_cases):
         gold_out = SoftMax(x)
-        ref_out  = SoftMax_hard(x)
+        ref1_out  = SoftMax_1(x)
+        ref2_out  = SoftMax_2(x)
+        
+        mse1 = MSE(gold_out, ref1_out)
+        mse2 = MSE(gold_out, ref2_out)
 
-        # print(f"Test case {idx + 1}: {x}")
-        # print(f"SoftMax output: {my_out}\n\n")
+        mse_1_list.append(mse1)
+        mse_2_list.append(mse2)
 
-    print(torch.rand(5))
+        print(f"Test case {idx + 1}: {x}")
+        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}")
+
+        print(f'\n\n')
+
+    # print(torch.rand(5))
+
+
+    # === Plotting ===
+    x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
+    x_pos = np.arange(len(test_cases))
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(x_pos - 0.15, mse_1_list, width=0.3, label='MSE vs SoftMax_1', color='skyblue')
+    plt.bar(x_pos + 0.15, mse_2_list, width=0.3, label='MSE vs SoftMax_2', color='orange')
+
+    plt.xticks(x_pos, x_labels, rotation=45)
+    plt.ylabel("MSE Error")
+    plt.title("SoftMax Approximation Comparison (MSE)")
+    plt.legend()
+    plt.tight_layout()
+    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    plt.show()
+
+    x= float_to_q4_11(11.56)
+    y= q4_11_to_float(x)
+
+    print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
+
+
+
+    x= float_to_q4_11(-11.56)
+    y= q4_11_to_float(x)
+
+    print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
