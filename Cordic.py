@@ -151,6 +151,17 @@ if __name__ == "__main__":
 
     exp_error = abs(exp1_cordic - exp_true)
     print(f"Error: exp(z) error={exp_error}")
+
+
+    exp1_cordic, exp2_cordic, _, _ = cordic(1, 0, -70, m=-1, iterations=64, mode='rotation')
+    exp_approx = exp1_cordic + exp2_cordic
+
+    exp_true = math.exp(-70)
+    error = abs(exp_approx - exp_true)
+
+    print(f"CORDIC exp(-70) = {exp_approx}")
+    print(f"True exp(-70)   = {exp_true}")
+    print(f"Error           = {error}")
     
 
     ## ---- Hyperbolic vectoring mode ---- ##

@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import struct
 import torch
 
+from Cordic import cordic 
+
 
 def float_to_q4_11(value):
     """
@@ -62,11 +64,11 @@ def softmax_test_patterns():
         np.array([1.0, 1.01, 1.02, 1.03]),               #  2: small range
         np.array([1.0, 5.0, 30.0, 100.0]),               #  3: large range
         np.array([-10.0, -20.0, -30.0]),                 #  4: underflow test
-        # np.array([-1.2, 0.0, 1.2]),                      #  5: centered
+        np.array([-1.2, 0.0, 1.2]),                      #  5: centered
         np.array([0.0, 0.0, 0.0, 10.0]),                 #  6: one-hot
         np.random.normal(0, 1, 64),                      #  7: normal
         np.random.uniform(-5, 5, 64),                    #  8: uniform
-        # np.array([0.00001, 0.00002, 0.00003])            #  9: soft rounding
+        np.array([0.00001, 0.00002, 0.00003])            #  9: soft rounding
     ]
 
 
@@ -86,6 +88,8 @@ def SoftMax(x):
     summation = np.sum(exp_diff)
 
     softmax_x = exp_diff / summation
+
+    print("Softmax Golden:", softmax_x)
 
     return softmax_x
 
@@ -123,15 +127,16 @@ def SoftMax_1(x):
 
     # Summation of exponentials
     summation = np.sum(exp_approximated)
-    print("Exp. summation:", summation)
+    # print("Exp. summation:", summation)
     
     # rounde the summation to the nearest power of 2
     summation_rounded = 2 ** np.round(np.log2(summation))
-    print("Exp. summation_rounded:", summation_rounded)
+    # print("Exp. summation_rounded:", summation_rounded)
 
-    # divide by the FastInverse Square Root (FISR)
 
     softmax_x = exp_approximated / summation_rounded
+
+    print("Softmax power:", softmax_x)
     return softmax_x
 
 def SoftMax_2(x):
@@ -158,10 +163,12 @@ def SoftMax_2(x):
 
     # Summation of exponentials
     summation = np.sum(exp_approximated)
-    print("Exp. summation:", summation)
+    # print("Exp. summation:", summation)
     
     # divide by the FastInverse Square Root (FISR)
     softmax_x = exp_approximated * FISR((summation**2), 3)
+
+    print("Softmax FISR:", softmax_x)
 
     return softmax_x
 
@@ -174,12 +181,32 @@ def SoftMax_3(x):
     log2e = 1.5
     diff_log2 = diff * log2e
     exp_diff = cordic_pow2(diff_log2)
+    # exp_diff_list = []
+    # for d in diff:
+    #     cosh_val, sinh_val, _, _ = cordic(1, 0, d, m=-1, iterations=32, mode='rotation')
+    #     expx_val = cosh_val + sinh_val  # exp(x) = cosh(x) + sinh(x)
+    #     exp_diff_list.append(expx_val)  # exp ≈ cosh + sinh = x + y
+
+    # exp_diff = np.array(exp_diff_list)
+    
+    # print("diff:", diff)
+    # print("Exp. diff Cordic:", exp_diff)
+    # print("Exp. diff Golden:", np.exp(diff))
 
     summation = np.sum(exp_diff)
 
     # cordic approximation of inverse
-    inv_sum = cordic_inverse(summation)
-    softmax_x = exp_diff * inv_sum
+    softmax_list = []
+    for exp_d in exp_diff:
+        _, _, div_cordic, _ = cordic(summation, exp_d, 0, m=0, iterations=32, mode='vectoring')
+        softmax_list.append(div_cordic)
+
+    print("Softmax Cordic:", softmax_list)
+    
+    softmax_x = np.array(softmax_list)
+
+    # inv_sum = cordic_inverse(summation)
+    # softmax_x = exp_diff * inv_sum
 
     return softmax_x
 
