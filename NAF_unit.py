@@ -75,7 +75,7 @@ def SoftMax(x):
     NOTE: Hardware benchmark list
     (1) SoftMax_1: the exponentials used quantization and linear approximation, the summation is rounded to the nearest power of 2
     (2) SoftMax_2: the exponentials used quantization and linear approximation, and the division is done by Fast Inverse Square Root (FISR)
-    (3) SoftMax_3: Cordic
+    (3) SoftMax_3: the exponentials used quantization and Cordic approximation, and the division is done by Cordic inverse
     """
     maximum = np.max(x)
 
@@ -144,25 +144,16 @@ def SoftMax_2(x):
     maximum = np.max(x)
 
     diff = x - maximum
-    # print("diff:", diff)
-
 
     # quantize the exponentials
     log2e = 1.5
     int_frac = diff * log2e
 
-    # print("int_frac:", int_frac)
-
     frac_part, int_part = np.modf(int_frac)
-    # print("frac_part:", frac_part, "int_part:", int_part)
 
     frac_approximated = frac_part / 2 + 1  # linear approximation
-    # print("frac_approximated:", frac_approximated)
 
     exp_approximated = np.power(2, int_part) * frac_approximated
-    # print("exp_approximated:", exp_approximated, "exp: ", np.exp(diff))
-
-    # print(f'Error: {MSE(np.exp(diff), exp_approximated)}')
 
 
     # Summation of exponentials
@@ -174,9 +165,68 @@ def SoftMax_2(x):
 
     return softmax_x
 
+def SoftMax_3(x):
+    
+    maximum = np.max(x)
+    diff = x - maximum
+    
+    # cordic approximation of exponentials
+    log2e = 1.5
+    diff_log2 = diff * log2e
+    exp_diff = cordic_pow2(diff_log2)
 
+    summation = np.sum(exp_diff)
 
+    # cordic approximation of inverse
+    inv_sum = cordic_inverse(summation)
+    softmax_x = exp_diff * inv_sum
 
+    return softmax_x
+
+def cordic_pow2(x, iterations=16):
+    int_part = np.floor(x).astype(int)
+    frac_part = x - int_part
+
+    pow2_lut = [2 ** (2 ** -i) for i in range(iterations)]
+    
+    result = np.ones_like(x)
+    
+    for i in range(iterations):
+        mask = frac_part >= (2 ** -i)
+        result[mask] *= pow2_lut[i]
+        frac_part[mask] -= (2 ** -i)
+    
+    return result * (2.0 ** int_part)
+
+def cordic_inverse(x, iterations=20):
+    """
+    CORDIC-based inverse (1/x) using multiplicative inverse approach.
+    Simulates shift-add CORDIC style, but not optimized for hardware here.
+    Assumes x > 0.
+    """
+    if x <= 0:
+        raise ValueError("CORDIC inverse requires x > 0")
+
+    # Normalize x to [0.5, 1) by shifting (simulate as floating point here)
+    shift = 0
+    while x < 0.5:
+        x *= 2
+        shift -= 1
+    while x >= 1.0:
+        x /= 2
+        shift += 1
+
+    # Initial estimate z0
+    z = 1.5 - x  # or try z = 1 / (1 + x) as better init
+
+    # Iteratively improve z such that z * x ≈ 1
+    for _ in range(iterations):
+        z = z * (2 - x * z)
+
+    # Adjust scaling due to initial normalization
+    z *= 2 ** (-shift)
+
+    return z
 
 def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
@@ -258,7 +308,7 @@ def MSE(golden, prediction):
         accuracy = math.log10(1 / mse)
         loss = mse
 
-    return loss
+    return accuracy
 
 
 if __name__ == "__main__":
@@ -273,6 +323,7 @@ if __name__ == "__main__":
     # Store results
     mse_1_list = []
     mse_2_list = []
+    mse_3_list = []
 
     test_cases = softmax_test_patterns()
 
@@ -280,15 +331,18 @@ if __name__ == "__main__":
         gold_out = SoftMax(x)
         ref1_out  = SoftMax_1(x)
         ref2_out  = SoftMax_2(x)
+        ref3_out  = SoftMax_3(x)
         
         mse1 = MSE(gold_out, ref1_out)
         mse2 = MSE(gold_out, ref2_out)
+        mse3 = MSE(gold_out, ref3_out)
 
         mse_1_list.append(mse1)
         mse_2_list.append(mse2)
+        mse_3_list.append(mse3)
 
         print(f"Test case {idx + 1}: {x}")
-        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}")
+        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
 
         print(f'\n\n')
 
@@ -300,11 +354,12 @@ if __name__ == "__main__":
     x_pos = np.arange(len(test_cases))
 
     plt.figure(figsize=(10, 6))
-    plt.bar(x_pos - 0.15, mse_1_list, width=0.3, label='MSE vs SoftMax_1', color='skyblue')
-    plt.bar(x_pos + 0.15, mse_2_list, width=0.3, label='MSE vs SoftMax_2', color='orange')
+    plt.bar(x_pos - 0.3, mse_1_list, width=0.3, label='MSE vs Power of two', color='skyblue')
+    plt.bar(x_pos + 0.0, mse_2_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='orange')
+    plt.bar(x_pos + 0.3, mse_3_list, width=0.3, label='MSE vs Cordic', color='yellow')
 
     plt.xticks(x_pos, x_labels, rotation=45)
-    plt.ylabel("MSE Error")
+    plt.ylabel("MSE Accuracy")
     plt.title("SoftMax Approximation Comparison (MSE)")
     plt.legend()
     plt.tight_layout()
