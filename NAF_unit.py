@@ -82,8 +82,10 @@ def SoftMax(x):
     maximum = np.max(x)
 
     diff = x - maximum
+    print("Diff Golden:", diff)
 
     exp_diff = np.exp(diff)
+    print("Exp. diff Golden:", exp_diff)
 
     summation = np.sum(exp_diff)
 
@@ -178,21 +180,23 @@ def SoftMax_3(x):
     diff = x - maximum
     
     # cordic approximation of exponentials
-    log2e = 1.5
-    diff_log2 = diff * log2e
-    exp_diff = cordic_pow2(diff_log2)
-    # exp_diff_list = []
-    # for d in diff:
-    #     cosh_val, sinh_val, _, _ = cordic(1, 0, d, m=-1, iterations=32, mode='rotation')
-    #     expx_val = cosh_val + sinh_val  # exp(x) = cosh(x) + sinh(x)
-    #     exp_diff_list.append(expx_val)  # exp ≈ cosh + sinh = x + y
+    log2e = 1.442695
+    diff_frac_part, diff_int_part = np.modf(diff)
 
-    # exp_diff = np.array(exp_diff_list)
+    exp_diff_list = []
+
+    for i in range(len(diff)):
+        e_int = 2**(diff_int_part[i] * log2e)  # TODO: the odd cannot shift, need to used LUT
+
+        exp_diff, _, _, _ = cordic(e_int, e_int, diff_frac_part[i], m=-1, iterations=32, mode='rotation')
+
+        # exp_diff_list.append(e_int * e_frac)
+        exp_diff_list.append(exp_diff)
+
+    exp_diff = np.array(exp_diff_list)
     
-    # print("diff:", diff)
-    # print("Exp. diff Cordic:", exp_diff)
-    # print("Exp. diff Golden:", np.exp(diff))
-
+    print("diff:", diff)
+    print("Exp. diff Cordic:", exp_diff)
     summation = np.sum(exp_diff)
 
     # cordic approximation of inverse
