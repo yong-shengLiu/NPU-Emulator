@@ -67,7 +67,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
                 convergence_list.append(theta)
                 
                 if abs(theta) < threshold:
-                    print(f"Early stop at iteration {i}, theta ≈ 0")
+                    print(f"Early stop at iteration {i}, theta almost 0")
                     break
                 
             elif mode == "vectoring":
@@ -75,7 +75,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
                 convergence_list.append(y)
                 
                 if abs(y) < threshold:
-                    print(f"Early stop at iteration {i}, y ≈ 0")
+                    print(f"Early stop at iteration {i}, y almost 0")
                     break
                 
             else:
