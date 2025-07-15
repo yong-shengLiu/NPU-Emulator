@@ -95,7 +95,6 @@ def SoftMax(x):
 
     return softmax_x
 
-
 def SoftMax_1(x):
     """
     NOTE:
@@ -209,61 +208,18 @@ def SoftMax_3(x):
     
     softmax_x = np.array(softmax_list)
 
-    # inv_sum = cordic_inverse(summation)
-    # softmax_x = exp_diff * inv_sum
-
     return softmax_x
 
-def cordic_pow2(x, iterations=16):
-    int_part = np.floor(x).astype(int)
-    frac_part = x - int_part
 
-    pow2_lut = [2 ** (2 ** -i) for i in range(iterations)]
-    
-    result = np.ones_like(x)
-    
-    for i in range(iterations):
-        mask = frac_part >= (2 ** -i)
-        result[mask] *= pow2_lut[i]
-        frac_part[mask] -= (2 ** -i)
-    
-    return result * (2.0 ** int_part)
+def GELU(x):
+    return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
 
-def cordic_inverse(x, iterations=20):
-    """
-    CORDIC-based inverse (1/x) using multiplicative inverse approach.
-    Simulates shift-add CORDIC style, but not optimized for hardware here.
-    Assumes x > 0.
-    """
-    if x <= 0:
-        raise ValueError("CORDIC inverse requires x > 0")
 
-    # Normalize x to [0.5, 1) by shifting (simulate as floating point here)
-    shift = 0
-    while x < 0.5:
-        x *= 2
-        shift -= 1
-    while x >= 1.0:
-        x /= 2
-        shift += 1
-
-    # Initial estimate z0
-    z = 1.5 - x  # or try z = 1 / (1 + x) as better init
-
-    # Iteratively improve z such that z * x ≈ 1
-    for _ in range(iterations):
-        z = z * (2 - x * z)
-
-    # Adjust scaling due to initial normalization
-    z *= 2 ** (-shift)
-
-    return z
+def Sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
 def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
-
-def gelu(x):
-    return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
 
 
 def layer_norm(x, gamma=None, beta=None, epsilon=1e-5):
