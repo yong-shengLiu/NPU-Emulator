@@ -61,7 +61,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
             # theta -= di * LUT_table[i]
             x, y = x_new, y_new
 
-            print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
+            # print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
     else:
         for i in range(iterations):
             # Early termination: y is already close enough to 0
@@ -138,16 +138,25 @@ if __name__ == "__main__":
     # ## ---- Linear rotation mode ---- ##
     # print(f"\n\n<Case3> Linear rotation mode")
     # y + xz
-    x = -10
-    y = 0
-    z = -5
-    x_cordic, acc_cordic, theta_remain, convergence_list = cordic(x, y, z, m=0, iterations=32, mode='rotation')
-    print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
+    # x = 33
+    # y = 0
+    # z = 33
 
-    acc_true = y + x * z
+    # power = int(np.log2(x))
 
-    acc_error = abs(acc_cordic - acc_true)
-    print(f"Error:  acc error={acc_error}")
+    # x_norm = x / (2**power)
+    # z_norm = z / (2**power)
+    # print(f"x_norm: {x_norm}, z_norm: {z_norm}, power: {power}")
+    # x_cordic, acc_cordic, theta_remain, convergence_list = cordic(x_norm, y, z_norm, m=0, iterations=32, mode='rotation')
+    
+    # acc_cordic *= (2**power) * (2**power)  # compensate the gain
+    # print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
+
+    
+    # acc_true = y + x * z
+
+    # acc_error = abs(acc_cordic - acc_true)
+    # print(f"Error:  acc error={acc_error}")
 
 
     ## ---- Linear vectoring mode ---- ##
@@ -205,21 +214,21 @@ if __name__ == "__main__":
     # print(f"Error:  square error={square_error}, tanh error={tanh_error}")
 
 
-    # # sqrt(x^2 - y^2),   sqrt(x) = sqrt((x+1/4)^2 - (x-1/4)^2)
-    # x = 2
-    # # preprocessing
-    # # n = int(math.sqrt(x))
-    # # print(f'n: {n}')
-    # print(f"y/x: {(x-1/4)/(x+1/4)}")
-    # square_cordic, y_remain, tanh_cordic, convergence_list = cordic( (x+1/4), (x-1/4), 0, m=-1, iterations=32, mode='vectoring')
+    # sqrt(x^2 - y^2),   sqrt(x) = sqrt((x+1/4)^2 - (x-1/4)^2)
+    x = 2
+    # preprocessing
+    # n = int(math.sqrt(x))
+    # print(f'n: {n}')
+    print(f"y/x: {(x-1/4)/(x+1/4)}")
+    square_cordic, y_remain, tanh_cordic, convergence_list = cordic( (x+1/4), (x-1/4), 0, m=-1, iterations=32, mode='vectoring')
     
-    # # cal_value = square_cordic * n
-    # print(f"square: {square_cordic}, y: {y_remain}, tanh: {tanh_cordic}")
+    # cal_value = square_cordic * n
+    print(f"square: {square_cordic}, y: {y_remain}, tanh: {tanh_cordic}")
 
-    # square_true = math.sqrt(x)
+    square_true = math.sqrt(x)
 
-    # square_error = abs(square_cordic - square_true)
-    # print(f"True: {square_true},  Error: square error={square_error}")
+    square_error = abs(square_cordic - square_true)
+    print(f"True: {square_true},  Error: square error={square_error}")
 
 
     # Plot convergence

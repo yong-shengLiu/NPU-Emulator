@@ -315,17 +315,38 @@ def LayerNorm_2(x, gamma=None, beta=None):
     difference_squared_list = []
 
     for i in range(len(difference)):
-        print(f"Difference[{i}]: {difference[i]}")
-        _, difference_squared, _, _ = cordic(difference[i], 0, difference[i], m=0, iterations=32, mode='rotation')
+        # print(f"Difference[{i}]: {difference[i]}")
+
+        # normalize the difference to avoid out of Cordic range
+        if difference[i] != 0:
+            abs_difference = abs(difference[i])
+            power = int(np.log2(abs_difference))
+            diff_norm = abs_difference / (2**power)
+        else:
+            diff_norm = difference[i]
+        
+        _, difference_squared, _, _ = cordic(diff_norm, 0, diff_norm, m=0, iterations=32, mode='rotation')
+        
+        if difference[i] != 0:
+            difference_squared *= (2**power) * (2**power)  # compensate the gain
         difference_squared_list.append(difference_squared)
 
     difference_squared = np.array(difference_squared_list)
 
-    variance = np.sum(difference_squared) * FISR((x.shape[-1]**2), 3)  # assuming last dimension is the feature dimension
+
+    # variance = difference_squared_summation / x.shape[-1]
+    difference_squared_summation = np.sum(difference_squared)
+    _, _, divide, _ = cordic(x.shape[-1], 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / x.shape[-1]
+    _, variance, _, _ = cordic(difference_squared_summation, 0, divide, m=0, iterations=32, mode='rotation')
 
 
     # difference * 1/square(variance)
-    normalized = difference * FISR(variance, 3)  # using FISR for fast inverse square root
+    square_variance, _, _, _ = cordic( (variance+1/4), (variance-1/4), 0, m=-1, iterations=32, mode='vectoring') # square(variance)
+    print(f"Variance: {variance}, square_variance: {square_variance}")
+    normalized = difference / square_variance
+    # _, _, divide, _ = cordic(square_variance, 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / square_variance
+    # _, normalized, _, _ = cordic(difference, 0, divide, m=0, iterations=32, mode='rotation') # difference * 1 / square_variance
+    
 
 
     # scale gamma, bias beta
