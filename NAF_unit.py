@@ -222,27 +222,113 @@ def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
 
 
-def layer_norm(x, gamma=None, beta=None, epsilon=1e-5):
+def layernorm_test_patterns():
+    return [
+        np.array([1.0, 1.0, 1.0, 1.0]),      # 1: uniform input (no variance)
+        np.array([1.0, 1.01, 0.99, 1.02]),   # 2: small noise around constant (low variance)
+        np.array([1.0, 5.0, 30.0, 100.0]),   # 3: large range values (high variance)
+        np.array([-1.0, 0.0, 1.0]),          # 4: centered around zero
+        np.array([-10.0, 0.0, 10.0]),        # 5: symmetric but wider range
+        np.array([0.0, 0.0, 0.0, 10.0]),     # 6: one-hot-like (one large value among zeros)
+        np.array([-5.0, -10.0, -2.0, -1.0]), # 7: negative dominant (simulate bias drift)
+        np.array([1e-7, 2e-7, 3e-7]),        # 8: tiny floating-point values (check underflow)
+        np.array([0.1, 0.2, 0.3, 100.0]),    # 9: outlier case (one huge value)
+        np.random.normal(0, 1, 8),           # 10: random normal
+        np.random.uniform(-3, 3, 8)          # 11: random uniform
+    ]
+
+def LayerNorm(x, gamma=None, beta=None):
     """
-    Layer Normalization function
-
-    Args:
-        x (np.ndarray): shape = (batch_size, feature_dim)
-        gamma (np.ndarray): scale parameter (same shape as feature_dim)
-        beta (np.ndarray): shift parameter (same shape as feature_dim)
-        epsilon (float): small constant to avoid division by zero
-
-    Returns:
-        np.ndarray: normalized result, same shape as x
+    NOTE: Hardware benchmark list
+    (1) LayerNorm1: Fasst Inverse Square Root (FISR)
+    (2) LayerNorm2: Cordic approximation
     """
     # Step 1: compute mean and variance along last dimension
     mean = np.mean(x, axis=-1, keepdims=True)
     variance = np.var(x, axis=-1, keepdims=True)
 
     # Step 2: normalize
-    normalized = (x - mean) / np.sqrt(variance + epsilon)
+    normalized = (x - mean) / np.sqrt(variance)
 
     # Step 3: scale and shift (optional)
+    if gamma is not None:
+        normalized *= gamma
+    if beta is not None:
+        normalized += beta
+
+    return normalized
+
+
+def LayerNorm_1(x, gamma=None, beta=None):
+    """
+    NOTE:
+    uses Fast Inverse Square Root (FISR) as divider and 1/sqrt(x)
+    """
+
+    # mean
+    summation = np.sum(x)
+    mean = summation * FISR((x.shape[-1]**2), 3) # assuming last dimension is the feature dimension
+    print("Mean:", mean)
+
+
+    # substract mean
+    difference = x - mean
+    print("Difference:", difference)
+
+
+    # variance
+    difference_squared = difference ** 2
+    variance = np.sum(difference_squared) * FISR((x.shape[-1]**2), 3)  # assuming last dimension is the feature dimension
+
+
+    # difference * 1/square(variance)
+    normalized = difference * FISR(variance, 3)  # using FISR for fast inverse square root
+
+
+    # scale gamma, bias beta
+    if gamma is not None:
+        normalized *= gamma
+    if beta is not None:
+        normalized += beta
+
+    return normalized
+    
+
+def LayerNorm_2(x, gamma=None, beta=None):
+    """
+    NOTE: uses Cordic
+    """
+
+    # mean
+    summation = np.sum(x)
+    _, _, divide, _ = cordic(x.shape[-1], 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / x.shape[-1]
+    _, mean, _, _ = cordic(summation, 0, divide, m=0, iterations=32, mode='rotation')  # mean = summation / x.shape[-1]
+    print(f"Mean: {mean}, shape: {x.shape[-1]}, summation: {summation}")
+
+
+    # substract mean
+    difference = x - mean
+    print("Difference:", difference)
+
+
+    # variance
+    difference_squared_list = []
+
+    for i in range(len(difference)):
+        print(f"Difference[{i}]: {difference[i]}")
+        _, difference_squared, _, _ = cordic(difference[i], 0, difference[i], m=0, iterations=32, mode='rotation')
+        difference_squared_list.append(difference_squared)
+
+    difference_squared = np.array(difference_squared_list)
+
+    variance = np.sum(difference_squared) * FISR((x.shape[-1]**2), 3)  # assuming last dimension is the feature dimension
+
+
+    # difference * 1/square(variance)
+    normalized = difference * FISR(variance, 3)  # using FISR for fast inverse square root
+
+
+    # scale gamma, bias beta
     if gamma is not None:
         normalized *= gamma
     if beta is not None:
@@ -301,39 +387,81 @@ def MSE(golden, prediction):
 if __name__ == "__main__":
     print("=== SFU testbench ===")
 
-    # x = np.linspace(-10, 10)
-    # plt.plot(x, SoftMax(x))
-    # plt.axis('tight')
-    # plt.title('Activation Function :GELU')
+
+    ### ---------- SoftMax Benchmarking ---------- ###
+    # mse_1_list = []
+    # mse_2_list = []
+    # mse_3_list = []
+
+    # test_cases = softmax_test_patterns()
+
+    # for idx, x in enumerate(test_cases):
+    #     gold_out = SoftMax(x)
+    #     ref1_out  = SoftMax_1(x)
+    #     ref2_out  = SoftMax_2(x)
+    #     ref3_out  = SoftMax_3(x)
+        
+    #     mse1 = MSE(gold_out, ref1_out)
+    #     mse2 = MSE(gold_out, ref2_out)
+    #     mse3 = MSE(gold_out, ref3_out)
+
+    #     mse_1_list.append(mse1)
+    #     mse_2_list.append(mse2)
+    #     mse_3_list.append(mse3)
+
+    #     print(f"Test case {idx + 1}: {x}")
+    #     print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
+
+    #     print(f'\n\n')
+
+    # === Plotting ===
+    # x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
+    # x_pos = np.arange(len(test_cases))
+
+    # plt.figure(figsize=(10, 6))
+    # plt.bar(x_pos - 0.3, mse_1_list, width=0.3, label='MSE vs Power of two', color='skyblue')
+    # plt.bar(x_pos + 0.0, mse_2_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='orange')
+    # plt.bar(x_pos + 0.3, mse_3_list, width=0.3, label='MSE vs Cordic', color='yellow')
+
+    # plt.xticks(x_pos, x_labels, rotation=45)
+    # plt.ylabel("MSE Accuracy")
+    # plt.title("SoftMax Approximation Comparison (MSE)")
+    # plt.legend()
+    # plt.tight_layout()
+    # plt.grid(True, axis='y', linestyle='--', alpha=0.5)
     # plt.show()
 
-    # Store results
+    
+
+    ### ---------- LayerNorm Benchmarking ---------- ###
     mse_1_list = []
     mse_2_list = []
-    mse_3_list = []
+    # mse_3_list = []
 
-    test_cases = softmax_test_patterns()
+    test_cases = layernorm_test_patterns()
 
     for idx, x in enumerate(test_cases):
-        gold_out = SoftMax(x)
-        ref1_out  = SoftMax_1(x)
-        ref2_out  = SoftMax_2(x)
-        ref3_out  = SoftMax_3(x)
+        gold_out = LayerNorm(x, gamma=1.03, beta=0.02)
+        ref1_out  = LayerNorm_1(x, gamma=1.03, beta=0.02)
+        ref2_out  = LayerNorm_2(x, gamma=1.03, beta=0.02)
+        # ref3_out  = LayerNorm_3(x)
         
         mse1 = MSE(gold_out, ref1_out)
         mse2 = MSE(gold_out, ref2_out)
-        mse3 = MSE(gold_out, ref3_out)
+        # mse3 = MSE(gold_out, ref3_out)
 
         mse_1_list.append(mse1)
         mse_2_list.append(mse2)
-        mse_3_list.append(mse3)
+        # mse_3_list.append(mse3)
 
         print(f"Test case {idx + 1}: {x}")
-        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
+        # print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
+        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}")
+        print(f"Gold: {gold_out}, ref1: {ref1_out}, ref2: {ref2_out}")
+
+        
 
         print(f'\n\n')
-
-    # print(torch.rand(5))
 
 
     # === Plotting ===
@@ -341,26 +469,45 @@ if __name__ == "__main__":
     x_pos = np.arange(len(test_cases))
 
     plt.figure(figsize=(10, 6))
-    plt.bar(x_pos - 0.3, mse_1_list, width=0.3, label='MSE vs Power of two', color='skyblue')
-    plt.bar(x_pos + 0.0, mse_2_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='orange')
-    plt.bar(x_pos + 0.3, mse_3_list, width=0.3, label='MSE vs Cordic', color='yellow')
+    plt.bar(x_pos - 0.15, mse_1_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='skyblue')
+    plt.bar(x_pos + 0.15, mse_2_list, width=0.3, label='MSE vs Cordic', color='orange')
 
     plt.xticks(x_pos, x_labels, rotation=45)
     plt.ylabel("MSE Accuracy")
-    plt.title("SoftMax Approximation Comparison (MSE)")
+    plt.title("LayerNorm Approximation Comparison (MSE)")
     plt.legend()
     plt.tight_layout()
     plt.grid(True, axis='y', linestyle='--', alpha=0.5)
     plt.show()
 
-    x= float_to_q4_11(11.56)
-    y= q4_11_to_float(x)
+    # x= float_to_q4_11(11.56)
+    # y= q4_11_to_float(x)
 
-    print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
+    # print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
 
 
+    # x= float_to_q4_11(-11.56)
+    # y= q4_11_to_float(x)
 
-    x= float_to_q4_11(-11.56)
-    y= q4_11_to_float(x)
+    # print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
 
-    print(f"Float to Q4.11: {x}, Q4.11 to Float: {y}")
+
+    # x = np.array(
+    #     [[1,  2,  3],     # batch 0, time 0
+    #     [4,  5,  6]],    # batch 0, time 1
+    # )
+    # print(x.shape)
+    # print(np.sum(x, axis=0))
+    # print(np.sum(x, axis=1))
+
+
+    # x = np.array([
+    #     [[1,  2,  3], [4,  5,  6]],
+
+    #     [[7,  8,  9], [10, 11, 12]]
+    # ])
+    # print(x.shape)  # (2, 2, 3)
+
+    # print(np.sum(x, axis=0))
+    # print(np.sum(x, axis=1))
+    # print(np.sum(x, axis=2))

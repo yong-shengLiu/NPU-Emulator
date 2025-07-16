@@ -12,10 +12,9 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
     """
     threshold = 1e-20
     hyperbolic_iteration = [
-        1, 2, 3, 4, 4, 5, 6, 7, 8, 9,
-        10, 11, 12, 13, 13, 14, 15, 16, 17, 18,
-        19, 20, 21, 21, 22, 23, 24, 25, 26, 27,
-        27, 28
+        1, 2, 3, 4, 4,
+        5, 6, 7, 8, 9, 10, 11, 12, 13, 13,
+        14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 40
     ]
     if m == -1 and iterations > len(hyperbolic_iteration):
         iterations = len(hyperbolic_iteration)
@@ -30,6 +29,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
         LUT_table = [math.atanh(2**-i) for i in hyperbolic_iteration[:iterations]]
     else:
         raise ValueError("Invalid m parameter")
+    # print(f"LUT_table: {LUT_table}")
     
     # CORDIC gain (will shrink, need to compensate at the end)
     K = 1.0
@@ -57,8 +57,11 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
 
             x_new = x + di * y * 2**(-idx)
             y_new = y + di * x * 2**(-idx)
-            theta -= di * LUT_table[i]
+            theta -= di * LUT_table[idx]
+            # theta -= di * LUT_table[i]
             x, y = x_new, y_new
+
+            print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
     else:
         for i in range(iterations):
             # Early termination: y is already close enough to 0
@@ -86,6 +89,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
             y_new = y + di * x * 2**(-i)
             theta -= di * LUT_table[i]
             x, y = x_new, y_new
+            # print(f"theta{i}: {theta}, x{i}: {x}, y{i}: {y}")
 
 
     # Output with gain compensation
@@ -119,7 +123,7 @@ if __name__ == "__main__":
 
     # ## ---- Circular vectoring mode ---- ##
     # print(f"\n\n<Case2> Circular vectoring mode")
-    # # square(x^2 + y^2), tan-1(y)
+    # # sqrt(x^2 + y^2), tan-1(y)
     # square_cordic, y_remain, arctan_cordic, convergence_list = cordic(1, 1, 0, m=1, iterations=32, mode='vectoring')
     # print(f"square: {square_cordic}, y: {y_remain}, arctan: {arctan_cordic}")
 
@@ -133,21 +137,24 @@ if __name__ == "__main__":
 
     # ## ---- Linear rotation mode ---- ##
     # print(f"\n\n<Case3> Linear rotation mode")
-    # # y + xz
-    # x_cordic, acc_cordic, theta_remain, convergence_list = cordic(2.3, 4.3, 1.4, m=0, iterations=32, mode='rotation')
-    # print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
+    # y + xz
+    x = -10
+    y = 0
+    z = -5
+    x_cordic, acc_cordic, theta_remain, convergence_list = cordic(x, y, z, m=0, iterations=32, mode='rotation')
+    print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
 
-    # acc_true = 4.3 + 2.3 * 1.4
+    acc_true = y + x * z
 
-    # acc_error = abs(acc_cordic - acc_true)
-    # print(f"Error:  acc error={acc_error}")
+    acc_error = abs(acc_cordic - acc_true)
+    print(f"Error:  acc error={acc_error}")
 
 
-    # ## ---- Linear vectoring mode ---- ##
+    ## ---- Linear vectoring mode ---- ##
     # print(f"\n\n<Case4> Linear vectoring mode")
     # # z + y/x
-    # x = 1
-    # y = 2.46519033e-32
+    # x = 4
+    # y = 136
     # z = 0
     # x_cordic, y_remain, div_cordic, convergence_list = cordic(x, y, z, m=0, iterations=32, mode='vectoring')
     # print(f"x: {x_cordic}, y: {y_remain}, div: {div_cordic}")
@@ -159,7 +166,7 @@ if __name__ == "__main__":
 
 
     # ## ---- Hyperbolic rotation mode ---- ##
-    print(f"\n\n<Case5> Hyperbolic rotation mode")
+    # print(f"\n\n<Case5> Hyperbolic rotation mode")
     # # coshz + sinhz = exp(z)
     # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, 0.4, m=-1, iterations=32, mode='rotation')
     # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
@@ -168,24 +175,25 @@ if __name__ == "__main__":
     # exp_error = abs(exp1_cordic - exp_true)
     # print(f"Error: exp(z) error={exp_error}")
 
-    value = -1.2
-    frac_part, int_part = np.modf(value)
-    e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
+    # value = -1.2
+    # frac_part, int_part = np.modf(value)
+    # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
 
-    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
-    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
+    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
 
-    exp_true = math.exp(value)
-    error = abs(exp1_cordic - exp_true)
+    # exp_true = math.exp(value)
+    # error = abs(exp1_cordic - exp_true)
 
-    print(f"CORDIC exp(-70) = {exp1_cordic}")
-    print(f"True exp(-70)   = {exp_true}")
-    print(f"Error           = {error}")
+    # print(f"CORDIC exp(-70) = {exp1_cordic}")
+    # print(f"True exp(-70)   = {exp_true}")
+    # print(f"Error           = {error}")
     
 
     # ## ---- Hyperbolic vectoring mode ---- ##
-    # print(f"\n\n<Case6> Hyperbolic rotation mode")
-    # # square(x^2 - y^2), tanh-1(y)
+    # NOTE: y/x must in range [-1, 1]
+    # print(f"\n\n<Case6> Hyperbolic vectoring mode")
+    # # sqrt(x^2 - y^2), tanh-1(y)
     # square_cordic, y_remain, tanh_cordic, convergence_list = cordic(4, 2, 0, m=-1, iterations=32, mode='vectoring')
     # print(f"square: {square_cordic}, y: {y_remain}, tanh: {tanh_cordic}")
 
@@ -195,6 +203,23 @@ if __name__ == "__main__":
     # square_error = abs(square_cordic - square_true)
     # tanh_error = abs(tanh_cordic - tanh_true)
     # print(f"Error:  square error={square_error}, tanh error={tanh_error}")
+
+
+    # # sqrt(x^2 - y^2),   sqrt(x) = sqrt((x+1/4)^2 - (x-1/4)^2)
+    # x = 2
+    # # preprocessing
+    # # n = int(math.sqrt(x))
+    # # print(f'n: {n}')
+    # print(f"y/x: {(x-1/4)/(x+1/4)}")
+    # square_cordic, y_remain, tanh_cordic, convergence_list = cordic( (x+1/4), (x-1/4), 0, m=-1, iterations=32, mode='vectoring')
+    
+    # # cal_value = square_cordic * n
+    # print(f"square: {square_cordic}, y: {y_remain}, tanh: {tanh_cordic}")
+
+    # square_true = math.sqrt(x)
+
+    # square_error = abs(square_cordic - square_true)
+    # print(f"True: {square_true},  Error: square error={square_error}")
 
 
     # Plot convergence
