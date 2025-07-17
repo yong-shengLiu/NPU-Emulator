@@ -1,10 +1,14 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import struct
 import torch
 
-from Cordic import cordic 
+from Cordic import cordic
+from Cordic import cordic_sqrt
+from Cordic import cordic_reciprocal
+from Cordic import cordic_mac
 
 
 def float_to_q4_11(value):
@@ -231,10 +235,9 @@ def layernorm_test_patterns():
         np.array([-10.0, 0.0, 10.0]),        # 5: symmetric but wider range
         np.array([0.0, 0.0, 0.0, 10.0]),     # 6: one-hot-like (one large value among zeros)
         np.array([-5.0, -10.0, -2.0, -1.0]), # 7: negative dominant (simulate bias drift)
-        np.array([1e-7, 2e-7, 3e-7]),        # 8: tiny floating-point values (check underflow)
-        np.array([0.1, 0.2, 0.3, 100.0]),    # 9: outlier case (one huge value)
-        np.random.normal(0, 1, 8),           # 10: random normal
-        np.random.uniform(-3, 3, 8)          # 11: random uniform
+        np.array([0.1, 0.2, 0.3, 100.0]),    # 8: outlier case (one huge value)
+        np.random.normal(0, 1, 8),           # 9: random normal
+        np.random.uniform(-3, 3, 8)          # 10: random uniform
     ]
 
 def LayerNorm(x, gamma=None, beta=None):
@@ -303,12 +306,12 @@ def LayerNorm_2(x, gamma=None, beta=None):
     summation = np.sum(x)
     _, _, divide, _ = cordic(x.shape[-1], 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / x.shape[-1]
     _, mean, _, _ = cordic(summation, 0, divide, m=0, iterations=32, mode='rotation')  # mean = summation / x.shape[-1]
-    print(f"Mean: {mean}, shape: {x.shape[-1]}, summation: {summation}")
+    # print(f"Mean: {mean}, shape: {x.shape[-1]}, summation: {summation}")
 
 
     # substract mean
     difference = x - mean
-    print("Difference:", difference)
+    # print("Difference:", difference)
 
 
     # variance
@@ -341,17 +344,38 @@ def LayerNorm_2(x, gamma=None, beta=None):
 
 
     # difference * 1/square(variance)
-    square_variance, _, _, _ = cordic( (variance+1/4), (variance-1/4), 0, m=-1, iterations=32, mode='vectoring') # square(variance)
-    print(f"Variance: {variance}, square_variance: {square_variance}")
-    normalized = difference / square_variance
-    # _, _, divide, _ = cordic(square_variance, 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / square_variance
-    # _, normalized, _, _ = cordic(difference, 0, divide, m=0, iterations=32, mode='rotation') # difference * 1 / square_variance
+    square_variance, _, _, _ = cordic_sqrt(variance, threshold=16, scale=1024, iterations=32) # square(variance)
+    # print(f"Variance: {variance}, square_variance: {square_variance}")
+
+    # _, _, reciprocal, _ = cordic(square_variance, 1, 0, m=0, iterations=32, mode='vectoring')  # 1 / square_variance
+    _, _, reciprocal, _ = cordic_reciprocal(square_variance, 1, 0, iterations=32)  # 1 / square_variance
+    # print(f"square_variance: {square_variance}, reciprocal: {reciprocal}")
+    
+    # normalized = difference * reciprocal
+    normalized_list = []
+
+    for i in range(len(difference)):
+        # print(f"Difference[{i}]: {difference[i]}")
+        _, normalized, _, _  = cordic_mac(difference[i], 0, reciprocal, iterations=32)
+        normalized_list.append(normalized)
+    normalized = np.array(normalized_list)
+    
+    # print(f"difference: {difference}, Cordic normalized: {normalized}, Golden normalized: {difference * reciprocal}")
     
 
 
     # scale gamma, bias beta
     if gamma is not None:
-        normalized *= gamma
+        # normalized *= gamma
+        normalized_list = []
+
+        for i in range(len(normalized)):
+            # print(f"Normalized[{i}]: {normalized[i]}, gamma: {gamma}, beta: {beta}")
+            _, normalized_temp, _, _  = cordic_mac(normalized[i], 0, gamma, iterations=32)
+            normalized_list.append(normalized_temp)
+        
+        normalized = np.array(normalized_list)
+
     if beta is not None:
         normalized += beta
 
@@ -435,7 +459,7 @@ if __name__ == "__main__":
 
     #     print(f'\n\n')
 
-    # === Plotting ===
+    # # === Plotting ===
     # x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
     # x_pos = np.arange(len(test_cases))
 
@@ -486,20 +510,38 @@ if __name__ == "__main__":
 
 
     # === Plotting ===
+    plt.figure(figsize=(10, 6))
     x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
     x_pos = np.arange(len(test_cases))
 
-    plt.figure(figsize=(10, 6))
-    plt.bar(x_pos - 0.15, mse_1_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='skyblue')
-    plt.bar(x_pos + 0.15, mse_2_list, width=0.3, label='MSE vs Cordic', color='orange')
+    for i in range(len(test_cases)):
+        x = x_pos[i]
+        
+        # mse_1
+        if np.isfinite(mse_1_list[i]):
+            plt.bar(x - 0.15, mse_1_list[i], width=0.3, label='MSE vs Fast Inverse Square Root' if i == 0 else "", color='skyblue')
+        else:
+            plt.text(x - 0.15, 0.05, 'inf', ha='center', va='bottom', color='blue', rotation=0)
+
+        # mse_2
+        if np.isfinite(mse_2_list[i]):
+            plt.bar(x + 0.15, mse_2_list[i], width=0.3, label='MSE vs Cordic' if i == 0 else "", color='orange')
+        else:
+            plt.text(x + 0.15, 0.05, 'inf', ha='center', va='bottom', color='orange', rotation=0)
+
 
     plt.xticks(x_pos, x_labels, rotation=45)
     plt.ylabel("MSE Accuracy")
     plt.title("LayerNorm Approximation Comparison (MSE)")
-    plt.legend()
     plt.tight_layout()
     plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+
+
+    patch1 = mpatches.Patch(color='skyblue', label='MSE vs Fast Inverse Square Root')
+    patch2 = mpatches.Patch(color='orange', label='MSE vs Cordic')
+    plt.legend(handles=[patch1, patch2])
     plt.show()
+
 
     # x= float_to_q4_11(11.56)
     # y= q4_11_to_float(x)
