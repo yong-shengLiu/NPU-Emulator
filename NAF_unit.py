@@ -464,9 +464,9 @@ if __name__ == "__main__":
     # x_pos = np.arange(len(test_cases))
 
     # plt.figure(figsize=(10, 6))
-    # plt.bar(x_pos - 0.3, mse_1_list, width=0.3, label='MSE vs Power of two', color='skyblue')
-    # plt.bar(x_pos + 0.0, mse_2_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='orange')
-    # plt.bar(x_pos + 0.3, mse_3_list, width=0.3, label='MSE vs Cordic', color='yellow')
+    # plt.bar(x_pos - 0.3, mse_1_list, width=0.3, label='MSE vs Power of two', color='yellow')
+    # plt.bar(x_pos + 0.0, mse_2_list, width=0.3, label='MSE vs Fast Inverse Square Root', color='skyblue')
+    # plt.bar(x_pos + 0.3, mse_3_list, width=0.3, label='MSE vs Cordic', color='orange')
 
     # plt.xticks(x_pos, x_labels, rotation=45)
     # plt.ylabel("MSE Accuracy")
@@ -478,7 +478,7 @@ if __name__ == "__main__":
 
     
 
-    ### ---------- LayerNorm Benchmarking ---------- ###
+    ## ---------- LayerNorm Benchmarking ---------- ###
     mse_1_list = []
     mse_2_list = []
     # mse_3_list = []
