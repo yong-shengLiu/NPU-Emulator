@@ -76,6 +76,22 @@ def softmax_test_patterns():
     ]
 
 
+def quantSoftMax(input_arr, output_arr,
+                 channels, innerSize):
+    """s
+    NOTE: the quantized Softmax
+    (1) input 32b(16I16F), output 16b(8I8F)
+    (2) The input pattern assume be an array, will along channel to do softmax
+    """
+
+    # find maximum
+    
+    # Calculate different
+
+    # Exponential
+
+    # Summation and divide
+
 def SoftMax(x):
     """
     NOTE: Hardware benchmark list
@@ -479,70 +495,74 @@ if __name__ == "__main__":
     
 
     ## ---------- LayerNorm Benchmarking ---------- ###
-    mse_1_list = []
-    mse_2_list = []
-    # mse_3_list = []
+    # mse_1_list = []
+    # mse_2_list = []
+    # # mse_3_list = []
 
-    test_cases = layernorm_test_patterns()
+    # test_cases = layernorm_test_patterns()
 
-    for idx, x in enumerate(test_cases):
-        gold_out = LayerNorm(x, gamma=1.03, beta=0.02)
-        ref1_out  = LayerNorm_1(x, gamma=1.03, beta=0.02)
-        ref2_out  = LayerNorm_2(x, gamma=1.03, beta=0.02)
-        # ref3_out  = LayerNorm_3(x)
+    # for idx, x in enumerate(test_cases):
+    #     gold_out = LayerNorm(x, gamma=1.03, beta=0.02)
+    #     ref1_out  = LayerNorm_1(x, gamma=1.03, beta=0.02)
+    #     ref2_out  = LayerNorm_2(x, gamma=1.03, beta=0.02)
+    #     # ref3_out  = LayerNorm_3(x)
         
-        mse1 = MSE(gold_out, ref1_out)
-        mse2 = MSE(gold_out, ref2_out)
-        # mse3 = MSE(gold_out, ref3_out)
+    #     mse1 = MSE(gold_out, ref1_out)
+    #     mse2 = MSE(gold_out, ref2_out)
+    #     # mse3 = MSE(gold_out, ref3_out)
 
-        mse_1_list.append(mse1)
-        mse_2_list.append(mse2)
-        # mse_3_list.append(mse3)
+    #     mse_1_list.append(mse1)
+    #     mse_2_list.append(mse2)
+    #     # mse_3_list.append(mse3)
 
-        print(f"Test case {idx + 1}: {x}")
-        # print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
-        print(f"MSE error 1: {mse1}, MSE error 2: {mse2}")
-        print(f"Gold: {gold_out}, ref1: {ref1_out}, ref2: {ref2_out}")
+    #     print(f"Test case {idx + 1}: {x}")
+    #     # print(f"MSE error 1: {mse1}, MSE error 2: {mse2}, MSE error 3: {mse3}")
+    #     print(f"MSE error 1: {mse1}, MSE error 2: {mse2}")
+    #     print(f"Gold: {gold_out}, ref1: {ref1_out}, ref2: {ref2_out}")
 
         
 
-        print(f'\n\n')
+    #     print(f'\n\n')
 
 
     # === Plotting ===
-    plt.figure(figsize=(10, 6))
-    x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
-    x_pos = np.arange(len(test_cases))
+    # plt.figure(figsize=(10, 6))
+    # x_labels = [f"Case {i+1}" for i in range(len(test_cases))]
+    # x_pos = np.arange(len(test_cases))
 
-    for i in range(len(test_cases)):
-        x = x_pos[i]
+    # for i in range(len(test_cases)):
+    #     x = x_pos[i]
         
-        # mse_1
-        if np.isfinite(mse_1_list[i]):
-            plt.bar(x - 0.15, mse_1_list[i], width=0.3, label='MSE vs Fast Inverse Square Root' if i == 0 else "", color='skyblue')
-        else:
-            plt.text(x - 0.15, 0.05, 'inf', ha='center', va='bottom', color='blue', rotation=0)
+    #     # mse_1
+    #     if np.isfinite(mse_1_list[i]):
+    #         plt.bar(x - 0.15, mse_1_list[i], width=0.3, label='MSE vs Fast Inverse Square Root' if i == 0 else "", color='skyblue')
+    #     else:
+    #         plt.text(x - 0.15, 0.05, 'inf', ha='center', va='bottom', color='blue', rotation=0)
 
-        # mse_2
-        if np.isfinite(mse_2_list[i]):
-            plt.bar(x + 0.15, mse_2_list[i], width=0.3, label='MSE vs Cordic' if i == 0 else "", color='orange')
-        else:
-            plt.text(x + 0.15, 0.05, 'inf', ha='center', va='bottom', color='orange', rotation=0)
-
-
-    plt.xticks(x_pos, x_labels, rotation=45)
-    plt.ylabel("MSE Accuracy")
-    plt.title("LayerNorm Approximation Comparison (MSE)")
-    plt.tight_layout()
-    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    #     # mse_2
+    #     if np.isfinite(mse_2_list[i]):
+    #         plt.bar(x + 0.15, mse_2_list[i], width=0.3, label='MSE vs Cordic' if i == 0 else "", color='orange')
+    #     else:
+    #         plt.text(x + 0.15, 0.05, 'inf', ha='center', va='bottom', color='orange', rotation=0)
 
 
-    patch1 = mpatches.Patch(color='skyblue', label='MSE vs Fast Inverse Square Root')
-    patch2 = mpatches.Patch(color='orange', label='MSE vs Cordic')
-    plt.legend(handles=[patch1, patch2])
-    plt.show()
+    # plt.xticks(x_pos, x_labels, rotation=45)
+    # plt.ylabel("MSE Accuracy")
+    # plt.title("LayerNorm Approximation Comparison (MSE)")
+    # plt.tight_layout()
+    # plt.grid(True, axis='y', linestyle='--', alpha=0.5)
 
 
+    # patch1 = mpatches.Patch(color='skyblue', label='MSE vs Fast Inverse Square Root')
+    # patch2 = mpatches.Patch(color='orange', label='MSE vs Cordic')
+    # plt.legend(handles=[patch1, patch2])
+    # plt.show()
+
+
+
+
+
+    ## ---------- Garbege test ---------- ###
     # x= float_to_q4_11(11.56)
     # y= q4_11_to_float(x)
 
