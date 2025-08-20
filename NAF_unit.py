@@ -76,8 +76,7 @@ def softmax_test_patterns():
     ]
 
 
-def quantSoftMax(input_arr, output_arr,
-                 channels, innerSize):
+def softmax_quantized(input_arr, channels, innerSize):
     """s
     NOTE: the quantized Softmax
     (1) input 32b(16I16F), output 16b(8I8F)
