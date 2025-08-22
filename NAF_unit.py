@@ -10,6 +10,14 @@ from Cordic import cordic_sqrt
 from Cordic import cordic_reciprocal
 from Cordic import cordic_mac
 
+def float_to_q8_8(x):
+    scale = 2 ** 8  # frac8
+    fixed = torch.round(x * scale).to(torch.int16)  # 存成 16b
+    return fixed
+
+def float_to_int8(x):
+    fixed = torch.round(x).to(torch.int8)  # 存成 8b
+    return fixed
 
 def float_to_q4_11(value):
     """
@@ -75,21 +83,84 @@ def softmax_test_patterns():
         np.array([0.00001, 0.00002, 0.00003])            #  9: soft rounding
     ]
 
-
-def softmax_quantized(input_arr, channels, innerSize):
-    """s
-    NOTE: the quantized Softmax
-    (1) input 32b(16I16F), output 16b(8I8F)
-    (2) The input pattern assume be an array, will along channel to do softmax
+def SoftMax_Tensor(x):
+    """
+    NOTE: Row-wise softmax for 2D tensor
     """
 
+    # Find maximum along row-wise
+    maximum, _ = torch.max(x, dim=1, keepdim=True)
+    print("Max Golden:\n", maximum)
+
+    # subtract maximum
+    diff = x - maximum
+    print("Diff Golden:\n", diff)
+
+    # exponentiation
+    exp_diff = torch.exp(diff)
+    print("Exp. diff Golden:\n", exp_diff)
+    fxp_exp_diff = float_to_q8_8(exp_diff)
+    print("FxP Exp. diff Golden:\n", fxp_exp_diff)
+
+    # summation  TODO: check the bitwidth of summation integer part
+    summation = torch.sum(fxp_exp_diff, dim=1, keepdim=True)
+    print("Summation Golden:\n", summation, summation.dtype)
+
+    # divide
+    softmax_x = exp_diff / summation
+    print("Softmax Golden:\n", softmax_x)
+    int8_softmax_x = float_to_int8(softmax_x)
+    print("Int8 Softmax Golden:\n", int8_softmax_x)
+    
+
+    return int8_softmax_x
+
+
+def softmax_quantized(x):
+    """
+    NOTE: the quantized Softmax
+    (1) input 8b, output 8b, intermediate 16b(8int + 8frac)
+    """
+    log2e = 1.5
+
     # find maximum
+    maximum = np.max(x)
     
     # Calculate different
+    diff = x - maximum
+    diff_frac_part, diff_int_part = np.modf(diff)
 
     # Exponential
+    exp_diff_list = []
+
+    for i in range(len(diff)):
+        e_int = 2**(diff_int_part[i] * log2e)  # TODO: the odd cannot shift, need to used LUT
+
+        exp_diff, _, _, _ = cordic(e_int, e_int, diff_frac_part[i], m=-1, iterations=32, mode='rotation')
+
+        # exp_diff_list.append(e_int * e_frac)
+        exp_diff_list.append(exp_diff)
+
+    exp_diff = np.array(exp_diff_list)
+
+    print("diff:", diff)
+    print("Exp. diff Cordic:", exp_diff)
+
 
     # Summation and divide
+    summation = np.sum(exp_diff)
+
+    # cordic approximation of inverse
+    softmax_list = []
+    for exp_d in exp_diff:
+        _, _, div_cordic, _ = cordic(summation, exp_d, 0, m=0, iterations=32, mode='vectoring')
+        softmax_list.append(div_cordic)
+
+    print("Softmax Cordic:", softmax_list)
+    
+    softmax_x = np.array(softmax_list)
+
+    return softmax_x
 
 def SoftMax(x):
     """
@@ -198,7 +269,8 @@ def SoftMax_3(x):
     diff = x - maximum
     
     # cordic approximation of exponentials
-    log2e = 1.442695
+    # log2e = 1.442695
+    log2e = 1.5
     diff_frac_part, diff_int_part = np.modf(diff)
 
     exp_diff_list = []
@@ -446,9 +518,20 @@ def MSE(golden, prediction):
 
 if __name__ == "__main__":
     print("=== SFU testbench ===")
+    
+    ### ---------- softmax quantization ---------- ###
+    np.random.seed(42)
+    logits = np.random.randint(-128, 128, (2, 5), dtype=np.int8)
+    print("Int8 Input logits:\n", logits)
+
+    x = torch.tensor(logits, dtype=torch.float32)
+
+    print(x, x.shape)
+    SoftMax_Tensor(x)
+    # print('softmax_quantized: ', softmax_quantized(arr_int8))
 
 
-    ### ---------- SoftMax Benchmarking ---------- ###
+    # ### ---------- SoftMax Benchmarking ---------- ###
     # mse_1_list = []
     # mse_2_list = []
     # mse_3_list = []
