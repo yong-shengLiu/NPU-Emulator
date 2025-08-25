@@ -16,7 +16,9 @@ tmp_sum = 1001
 ############################
 @dataclass
 class Instr:
-    """TODO: this will become Macro op in the future"""
+    """
+    TODO: this will become Macro op in the future
+    """
     op: str                      # 'VADD','VMUL','VLOAD','VSTORE','GELU','SOFTMAX','LN','PERM','VRED'
     vd: Optional[int]            # 目的向量暫存器 (None 表示 store 或控制類)
     vs1: Optional[int]
@@ -37,17 +39,23 @@ class Instr:
 class MicroOp:
     instr: Instr
     kind: str                  # 'ALU','LOAD','STORE','NAF','PERM','RED'
-    srcs: List[int]            # 來源 VReg id
+    srcs1: List[int]            # 來源 VReg id
+    srcs2: List[int]            # 來源 VReg id
     dst: Optional[int]         # 目的 VReg id
-    cycles: int                # 預估 FU 週期
+    
     lane_affinity: Optional[int] = None  # 指定 lane（可選）
     tokens: int = 1            # 要處理的 chunk 數 (for strip-mining)
     tag: str = ""              # debug
 
+    # performance model
+    cycles: int                # 預估 FU 週期
+
 ############################
 # Register files / Preds   #
 ############################
-
+"""
+TODO: support the Out-of-order in the future to eliminate some hazards
+"""
 class VectorRegFile:
     def __init__(self, num: int, vlen: int):
         self.num = num
@@ -224,7 +232,9 @@ class Decoder:
         return uops
 
 class Scheduler:
-    """重點：ISSUE 規則、資源與鏈結限制、跨 lane 搬移、避免 hazard"""
+    """
+    (1) receive the decoded micro-ops
+    """
     def __init__(self, lanes: List[Lane], vregs: VectorRegFile, mem: MemoryModel,
                  ic: RingInterconnect, energy: EnergyModel):
         self.lanes = lanes
@@ -232,8 +242,9 @@ class Scheduler:
         self.mem = mem
         self.ic = ic
         self.energy = energy
-        self.iq = deque()  # 發射佇列：uops 和 memory req
+        self.iq = deque()  # issue queue
 
+    # push micro-ops into the issue queue
     def submit_instrs(self, decoded_uops: List[MicroOp], raw_instr: Instr):
         if raw_instr.op in ('VLOAD', 'VSTORE'):
             self.iq.append(raw_instr)  # 讓 memory 流程特別處理
