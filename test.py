@@ -2,20 +2,29 @@ from dataclasses import dataclass, field
 from collections import deque, defaultdict
 from typing import List, Dict, Optional, Tuple, Any
 
-
+#############################################
+#  Out of Order buffer for temporary value  #
+#############################################
+tmp_exp = 1000
+tmp_sum = 1001
 @dataclass
 class Instr:
-    """TODO: this will become Macro op in the future"""
-    op: str                      # 'VADD','VMUL','VLOAD','VSTORE','GELU','SOFTMAX','LN','PERM','VRED'
-    vd: Optional[int]            # 目的向量暫存器 (None 表示 store 或控制類)
-    vs1: Optional[int]
-    vs2: Optional[int]
-    mask: Optional[int] = None   # 簡化：用 bitmask id 或 bool
-    imm: Optional[Any] = None    # 立即數/形狀/stride
-    len: int = 256               # vector 長度 (元素數)
-    dtype: str = "int16"         # 'int8','int16','fp16','fp32'
+    """
+    TODO: this will become Macro op in the future
+    """
+    op: str                      # 'VLOAD','VSTORE','SOFTMAX','GELU','LN',...
+    vd: Optional[int]            # dest vector register
+    vs1: Optional[int] = None
+    vs2: Optional[int] = None
+    mask: Optional[int] = None   # mask reg id OR 1-bit enable
+    imm: Optional[int] = None    # small immediate, mode flag, etc.
+
+    # setup control instruction (TODO: Setup by CPU of instruction in the future?)
+    len: int = 256               # vector length (elements)
+    dtype: str = "int8"         # 'int8','int16','fp16','fp32'
+
+    # performance model
     latency_hint: int = 1        # 預估 latency（可由 FU 覆寫）
-    mem_addr: Optional[int] = None
     name: str = ""               # 除錯顯示
 
 
@@ -39,23 +48,160 @@ class MicroOp:
     tag: str = ""              # token to record the macro-op instance
 
     # performance model
-    cycles: int                # predicted for each micro-op
+    cycles: int = 0            # predicted for each micro-op
 
 
-def _size_bytes(instr: Instr) -> int:
-    bpe = {'int8':1,'int16':2,'fp16':2,'fp32':4}.get(instr.dtype,1)
-    print(instr.dtype)
-    return instr.len * bpe
+class Decoder:
+    """
+    Convert the macro-op (Instr) to micro-ops (MicroOp)
+    (1) strip-mining
+    """
+    
+    def __init__(self, hw_vlen=256):
+        self.hw_vlen = hw_vlen  # the maximum vector length support by hardware
+
+    def decode(self, instr: Instr) -> List[MicroOp]:
+        micro_ops = []
+
+        # 1. 判斷需要拆幾份 (strip-mining)
+        total = instr.len
+        num_chunks = (total + self.hw_vlen - 1) // self.hw_vlen
+
+        for t in range(num_chunks):
+            vstart = t * self.hw_vlen
+            vl = min(self.hw_vlen, total - vstart)
+
+            # 2. 轉換 op 類型
+            if instr.op == "VLOAD":
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="LOAD",
+                    srcs1=[],   # LOAD 沒有來源 VReg
+                    srcs2=None,
+                    dst=instr.vd,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=5  # 假設 memory latency 5 cycles
+                ))
+
+            elif instr.op == "VSTORE":
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="STORE",
+                    srcs1=[instr.vs1] if instr.vs1 is not None else [],
+                    srcs2=None,
+                    dst=None,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=5
+                ))
+
+            elif instr.op == "SOFTMAX":
+                # find maximum
+
+                # subtract maximum
+
+                # exp
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="EXP",
+                    srcs1=[instr.vs1],
+                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    dst=tmp_exp,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=4
+                ))
+
+                # reduce sum
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="SLDU",
+                    srcs1=tmp_exp,
+                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    dst=tmp_sum,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=4
+                ))
+
+                # divide
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="DIV",
+                    srcs1=tmp_sum,
+                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    dst=[instr.vd],
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=4
+                ))
+
+            elif instr.op in ("GELU", "LN"):
+                # fusion op → 可能拆成多個基本 micro ops
+                # 這裡先簡化成一個 ALU micro-op
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="ALU",
+                    srcs1=[instr.vs1] if instr.vs1 is not None else [],
+                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    dst=instr.vd,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=10  # 比 ALU 更重，給個大一點 latency
+                ))
+
+            else:
+                # 預設：一般 ALU op
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="ALU",
+                    srcs1=[instr.vs1] if instr.vs1 is not None else [],
+                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    dst=instr.vd,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_{t}",
+                    cycles=1
+                ))
+
+        return micro_ops
 
 
-# 假設有一條 VLOAD，vector 長度=256，每個元素=int16 (2 bytes)
-instr = Instr(op="VLOAD", vd=0, vs1=None, vs2=None, len=256, dtype="fp32")
+# 建立一個 Macro op (softmax)
+instr = Instr(
+    op="SOFTMAX",
+    vd=1,
+    vs1=2,
+    len=256,
+    dtype="int8"
+)
 
-# 呼叫 _size_bytes
-bytes_needed = _size_bytes(instr)
-print(f'{bytes_needed} byte')   # 輸出 512
+decoder = Decoder(hw_vlen=256)
+micro_ops = decoder.decode(instr)
 
-
+for m in micro_ops:
+    print(m)
 
 # class VectorRegFile:
 #     def __init__(self, num: int, vlen: int):
