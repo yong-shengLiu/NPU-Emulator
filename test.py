@@ -5,8 +5,10 @@ from typing import List, Dict, Optional, Tuple, Any
 #############################################
 #  Out of Order buffer for temporary value  #
 #############################################
-tmp_exp = 1000
-tmp_sum = 1001
+tmp_sub = 1000
+tmp_exp = 1001
+tmp_sum = 1002
+tmp_max = 1003
 @dataclass
 class Instr:
     """
@@ -28,19 +30,20 @@ class Instr:
     name: str = ""               # 除錯顯示
 
 
+
 @dataclass
 class MicroOp:
     instr:  Instr
     
     # hardware wire related
-    op: str                       # 'ALU','LOAD','STORE','NAF','PERM','RED'
-    srcs1: List[int]              # Source 1 Vreg id
-    srcs2: Optional[List[int]]    # Source 2 Vreg id
-    dst: Optional[int]            # destination VReg id
-    scalar: Optional[int] = None  # scalar register id
-    vstart: int = 0               # vstart (for strip-mining)
-    vl: int = 256                 # vector length (elements)
-    lmul: int = 1                 # vector register group (1,2,4,8)
+    op: str                              # 'ALU','LOAD','STORE','NAF','PERM','RED'
+    srcs1: List[int]                     # Source 1 Vreg id
+    srcs2: Optional[List[int]] = None    # Source 2 Vreg id
+    dst: Optional[Optional[int]] = None  # destination VReg id
+    scalar: Optional[int] = None         # scalar register id
+    vstart: int = 0                      # vstart (for strip-mining)
+    vl: int = 256                        # vector length (elements)
+    lmul: int = 1                        # vector register group (1,2,4,8)
 
     # VRF-aware scheduling
     lane_affinity: Optional[int] = None  # to a micro operation task for lane scheduling
@@ -103,22 +106,46 @@ class Decoder:
                 ))
 
             elif instr.op == "SOFTMAX":
-                # find maximum
+                # reduction maximum
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="SLDU",
+                    srcs1=[instr.vs1],
+                    scalar=tmp_max,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_SLDU_{t}",
+                    cycles=4
+                ))
 
                 # subtract maximum
+                micro_ops.append(MicroOp(
+                    instr=instr,
+                    op="VALU",
+                    srcs1=[instr.vs1],
+                    srcs2=tmp_max,
+                    dst=tmp_sub,
+                    vstart=vstart,
+                    vl=vl,
+                    lmul=1,
+                    tokens=num_chunks,
+                    tag=f"{instr.op}_VALU_{t}",
+                    cycles=4
+                ))
 
                 # exp
                 micro_ops.append(MicroOp(
                     instr=instr,
                     op="EXP",
-                    srcs1=[instr.vs1],
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    srcs1=tmp_sub,
                     dst=tmp_exp,
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
+                    tag=f"{instr.op}_EXP_{t}",
                     cycles=4
                 ))
 
@@ -127,13 +154,12 @@ class Decoder:
                     instr=instr,
                     op="SLDU",
                     srcs1=tmp_exp,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
                     dst=tmp_sum,
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
+                    tag=f"{instr.op}_SLDU_{t}",
                     cycles=4
                 ))
 
@@ -141,14 +167,14 @@ class Decoder:
                 micro_ops.append(MicroOp(
                     instr=instr,
                     op="DIV",
-                    srcs1=tmp_sum,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    srcs1=tmp_exp,
+                    srcs2=tmp_sum,
                     dst=[instr.vd],
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
+                    tag=f"{instr.op}_DIV_{t}",
                     cycles=4
                 ))
 

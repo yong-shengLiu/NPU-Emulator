@@ -256,18 +256,17 @@ class Decoder:
                 ))
 
             elif instr.op == "SOFTMAX":
-                # find maximum
+                # reduction maximum
                 micro_ops.append(MicroOp(
                     instr=instr,
                     op="SLDU",
-                    srcs1=[instr.vs1] if instr.vs1 is not None else None,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    srcs1=[instr.vs1],
                     scalar=tmp_max,
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
+                    tag=f"{instr.op}_SLDU_{t}",
                     cycles=4
                 ))
 
@@ -282,8 +281,8 @@ class Decoder:
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
-                    cycles=4
+                    tag=f"{instr.op}_VALU_{t}",
+                    cycles=2
                 ))
 
                 # exp
@@ -291,14 +290,13 @@ class Decoder:
                     instr=instr,
                     op="EXP",
                     srcs1=tmp_sub,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
                     dst=tmp_exp,
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
-                    cycles=4
+                    tag=f"{instr.op}_EXP_{t}",
+                    cycles=3
                 ))
 
                 # reduce sum
@@ -306,13 +304,12 @@ class Decoder:
                     instr=instr,
                     op="SLDU",
                     srcs1=tmp_exp,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
                     dst=tmp_sum,
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
+                    tag=f"{instr.op}_SLDU_{t}",
                     cycles=4
                 ))
 
@@ -320,15 +317,15 @@ class Decoder:
                 micro_ops.append(MicroOp(
                     instr=instr,
                     op="DIV",
-                    srcs1=tmp_sum,
-                    srcs2=[instr.vs2] if instr.vs2 is not None else None,
+                    srcs1=tmp_exp,
+                    srcs2=tmp_sum,
                     dst=[instr.vd],
                     vstart=vstart,
                     vl=vl,
                     lmul=1,
                     tokens=num_chunks,
-                    tag=f"{instr.op}_{t}",
-                    cycles=4
+                    tag=f"{instr.op}_DIV_{t}",
+                    cycles=3
                 ))
 
             elif instr.op in ("GELU", "LN"):
@@ -494,14 +491,14 @@ def demo_program():
 
 
 if __name__ == "__main__":
-    print("=== VPU emulator testbench 2025/08/26 ===")
+    print("=== VPU emulator testbench 2025/08/27 ===")
     
 
     # demo program
     instr = Instr(
         op="SOFTMAX",
-        vd=1,
-        vs1=2,
+        vd=2,
+        vs1=1,
         len=4096,
         dtype="int8"
     )
