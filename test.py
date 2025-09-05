@@ -226,8 +226,8 @@ instr = Instr(
 decoder = Decoder(hw_vlen=256)
 micro_ops = decoder.decode(instr)
 
-for m in micro_ops:
-    print(m)
+# for m in micro_ops:
+#     print(m)
 
 # class VectorRegFile:
 #     def __init__(self, num: int, vlen: int):
@@ -271,3 +271,28 @@ for m in micro_ops:
 
 # # 在 cycle=12 時讀暫存器 2 → OK
 # print(vregs.read(2, cycle=12))   # "VADD_RESULT"
+
+
+
+# 佇列 / BFS
+q = deque()
+q.append(1)
+q.append(2)
+q.appendleft(0)   # [0, 1, 2]
+print(q)
+
+x = q.popleft()   # 0
+print(x)
+print(q)
+
+
+# 固定長度滑動視窗
+window = deque(maxlen=3)
+for v in [1, 2, 3, 4]:
+    window.append(v)         # 依序變成 [1,2,3] -> [2,3,4]
+    print(window)
+
+# 旋轉
+d = deque([1,2,3,4])
+d.rotate(1)                  # [4,1,2,3]
+d.rotate(-2)                 # [2,3,4,1]

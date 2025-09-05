@@ -4,6 +4,145 @@ from typing import Optional, List, Deque, Dict, Any, Tuple
 from collections import deque
 import enum
 
+
+############################
+# ISA / Instruction model  #
+############################
+@dataclass
+class Instr:
+    """
+    TODO: this will add custom op, like exp, div, etc.
+    """
+    op:   str
+    mask: Optional[int] = None   # mask reg id OR 1-bit enable
+
+    # vector
+    vs1: Optional[int] = None
+    vs2: Optional[int] = None
+    vs3: Optional[int] = None    # the source VREG to store main memory 
+    vd:  Optional[int]           # dest vector register
+
+    # scalar
+    rs1: Optional[int] = None    # base addr / scalar source
+    rs2: Optional[int] = None    # stride
+    rd:  Optional[int] = None    # reduction dest
+
+    # setup control instruction
+    imm: Optional[int] = None    # small immediate, mode flag, etc.
+
+    # performance model
+    latency_hint: int = 1        # 預估 latency（可由 FU 覆寫）
+    name: str = ""               # 除錯顯示
+
+
+# this is the micro op. constructed by RISC-V RVV
+@dataclass
+class ACCRequest:
+    '''
+    typedef struct packed {
+        logic                             req_valid;
+        logic                             resp_ready;
+        logic [31:0]                      insn;         // check
+        logic [CVA6Cfg.XLEN-1:0]          rs1;          // check
+        logic [CVA6Cfg.XLEN-1:0]          rs2;          // check
+        fpnew_pkg::roundmode_e            frm;
+        logic [CVA6Cfg.TRANS_ID_BITS-1:0] trans_id;     // check
+        logic                             store_pending;
+        logic                             acc_cons_en;
+        logic                             inval_ready;
+    } accelerator_req_t;
+    '''
+    instr: Instr
+    rs1_value: int = 0
+    rs2_value: int = 0
+    trans_ID:  int = 0   # issue id for top scoreboard
+
+
+# this is ara backend request
+@dataclass
+class ARARequest:
+    '''
+    typedef struct packed {
+        ara_op_e op; // Operation
+
+        // Stores and slides do not re-shuffle the
+        // source registers. In these two cases, vl refers
+        // to the target EEW and vtype.vsew, respectively.
+        // Since operand requesters work with the old
+        // eew of the source registers, we should rescale
+        // vl to the old eew to fetch the correct number of Bytes.
+        //
+        // Another solution would be to pass directly the target
+        // eew (vstores) or the vtype.vsew (vslides), but this would
+        // create confusion with the current naming convention
+        logic scale_vl;
+
+        // Mask vector register operand
+        logic vm;
+        rvv_pkg::vew_e eew_vmask;
+
+        // 1st vector register operand
+        logic [4:0] vs1;
+        logic use_vs1;
+        opqueue_conversion_e conversion_vs1;
+        rvv_pkg::vew_e eew_vs1;
+        rvv_pkg::vew_e old_eew_vs1;
+
+        // 2nd vector register operand
+        logic [4:0] vs2;
+        logic use_vs2;
+        opqueue_conversion_e conversion_vs2;
+        rvv_pkg::vew_e eew_vs2;
+
+        // Use vd as an operand as well (e.g., vmacc)
+        logic use_vd_op;
+        rvv_pkg::vew_e eew_vd_op;
+
+        // Scalar operand
+        elen_t scalar_op;
+        logic use_scalar_op;
+
+        // 2nd scalar operand: stride for constant-strided vector load/stores, slide offset for vector
+        // slides
+        elen_t stride;
+        logic is_stride_np2;
+
+        // Destination vector register
+        logic [4:0] vd;
+        logic use_vd;
+
+        // If asserted: vs2 is kept in MulFPU opqueue C, and vd_op in MulFPU A
+        logic swap_vs2_vd_op;
+
+        // Effective length multiplier
+        rvv_pkg::vlmul_e emul;
+
+        // Number of segments in segment mem op
+        logic [2:0] nf;
+
+        // Is this a fault-only-first load?
+        logic fault_only_first;
+
+        // Rounding-Mode for FP operations
+        fpnew_pkg::roundmode_e fp_rm;
+        // Widen FP immediate (re-encoding)
+        logic wide_fp_imm;
+        // Resizing of FP conversions
+        resize_e cvt_resize;
+
+        // Vector machine metadata
+        vlen_t vl;
+        vlen_t vstart;
+        rvv_pkg::vtype_t vtype;
+
+        // Request token, for registration in the sequencer
+        logic token;
+    } ara_req_t;
+    '''
+
+
+
+
 @dataclass
 class Request:
     id: int
