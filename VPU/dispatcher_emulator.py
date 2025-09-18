@@ -131,9 +131,9 @@ class ARARequest:
         resize_e cvt_resize;
 
         // Vector machine metadata
-        vlen_t vl;
-        vlen_t vstart;
-        rvv_pkg::vtype_t vtype;
+        vlen_t vl;                                 // check
+        vlen_t vstart;                             // check
+        rvv_pkg::vtype_t vtype;                    // check
 
         // Request token, for registration in the sequencer
         logic token;
@@ -156,6 +156,10 @@ class ARARequest:
     use_scalar_op: bool = False
     scalar_op: Optional[int] = None
 
+
+    vl: int
+    vstart: int
+    vtype: int
     # issue modules
     # 1. Vector Arithmetic: OPCFG, OPIVV, OPIVX, OPIVI, OPMVV, OPMVX, OPFVV, OPFVF
     # 2. Vector Loads:      VLE, VLSE, VLXE

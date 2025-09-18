@@ -2,6 +2,120 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+"""
+Q8 Coversion
+"""
+FRAC_BITS = 8   # Q8 小數位
+SCALE = 1 << FRAC_BITS
+
+def float_to_q8(x: float) -> int:
+    return int(round(x * SCALE))
+
+def q8_to_float(x_q8: int) -> float:
+    return x_q8 / SCALE
+
+def float_to_q16(x: float) -> int:
+    return int(round(x * (1 << 16)))
+
+def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
+    """
+    NOTE: the input x, y, theta are all in Q8 format (fixed-point with 8 fractional bits)
+    (1) m=1,  rotation mode(V), vectoring mode(V)   (circular)
+    (2) m=0,  rotation mode(V), vectoring mode(V)   (linear)
+    (3) m=-1, rotation mode(V), vectoring mode(V)   (hyperbolic)
+    """
+    threshold = 1e-20
+    hyperbolic_iteration = [
+        1, 2, 3, 4, 4,
+        5, 6, 7, 8, 9, 10, 11, 12, 13, 13,
+        14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 40
+    ]
+    if m == -1 and iterations > len(hyperbolic_iteration):
+        iterations = len(hyperbolic_iteration)
+    convergence_list = []
+
+    # Precompute the arctangent table for each iteration (Q8)
+    if m == 1:
+        LUT_table = [float_to_q8(math.atan(2**-i)) for i in range(iterations)]  # tan^-1(2^-i)
+    elif m == 0:
+        LUT_table = [float_to_q8(2**-i) for i in range(iterations)] # 2^-i
+    elif m == -1:
+        LUT_table = [float_to_q8(math.atanh(2**-i)) for i in hyperbolic_iteration[:iterations]]
+    else:
+        raise ValueError("Invalid m parameter")
+    # print(f"LUT_table: {LUT_table}")
+
+    
+    # CORDIC gain (will shrink, need to compensate at the end)
+    K = 1.0
+    if m == 1:
+        for i in range(iterations):
+            K *= 1 / math.sqrt(1 + 2**(-2*i))
+    elif m == 0:
+        K = 1.0
+    elif m == -1:
+        for i in hyperbolic_iteration[:iterations]:
+            K *= 1 / math.sqrt(1 - 2**(-2*i))
+    else:
+        raise ValueError("Invalid m")
+    
+    K = float_to_q8(K)
+            
+    # Perform iterative rotation
+    if m == -1:
+        for i in range(iterations):
+            idx = hyperbolic_iteration[i]
+            if mode == "rotation":
+                di = 1.0 if theta_q8 >= 0 else -1.0
+                convergence_list.append(theta_q8)
+            elif mode == "vectoring":
+                di = -1.0 if y >= 0 else 1.0
+                convergence_list.append(y)
+            else:
+                raise ValueError("Invalid mode")
+            
+
+            x_new = x_q8 + (int(di * y_q8) >> idx)
+            y_new = y_q8 + (int(di * x_q8) >> idx)
+            theta_q8 -= di * LUT_table[i]
+            # theta -= di * LUT_table[idx]
+            x_q8, y_q8 = x_new, y_new
+
+            print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
+    else:
+        for i in range(iterations):
+            # Early termination: y is already close enough to 0
+            if mode == "rotation":
+                di = 1.0 if theta_q8 >= 0 else -1.0
+                convergence_list.append(theta_q8)
+                
+                if abs(theta_q8) < threshold:
+                    print(f"Early stop at iteration {i}, theta almost 0")
+                    break
+                
+            elif mode == "vectoring":
+                di = -1.0 if y >= 0 else 1.0
+                convergence_list.append(y)
+                
+                if abs(y) < threshold:
+                    print(f"Early stop at iteration {i}, y almost 0")
+                    break
+
+            else:
+                raise ValueError("Invalid mode")
+
+            x_new = x_q8 - (int(m * di * y_q8) >> i)
+            y_new = y_q8 + (int(di * x_q8)     >> i)
+            theta_q8 -= di * LUT_table[i]
+            x_q8, y = x_new, y_new
+            print(f"theta{i}: {theta_q8}, x{i}: {x_q8}, y{i}: {y_q8}")
+
+    # print(f"Final K: {K}")
+    # Output with gain compensation
+    if m == 1 or m == -1:
+        return (x_q8 * K)>>8, (y_q8 * K)>>8, theta_q8, convergence_list
+    elif m == 0:
+        return x_q8, y_q8, theta_q8, convergence_list
 
 def cordic(x, y, theta, m, iterations=1, mode='circular'):
     """
@@ -179,8 +293,19 @@ def cordic_mac(x, y, z, iterations=32):
 
 if __name__ == "__main__":
     print("=== Cordic testbench ===")
+    x = -128
+    # coshz + sinhz = exp(z)
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(1), float_to_q8(1), float_to_q8(x), m=-1, iterations=8, mode='rotation')
+    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+    
+    exp_true = math.exp(x)
+    print(f"True exp(z): {exp_true}, CORDIC exp(z): {q8_to_float(exp1_cordic)}")
 
-    # ## ---- Circular rotation mode ---- ##
+    exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
+    print(f"Error: exp(z) error={exp_error}")
+
+    print(q8_to_float(-32768))
+    ### ---- Circular rotation mode ---- ##
     # print(f"\n\n<Case1> Circular rotation mode")
     # # cos sin
     # cos_cordic, sin_cordic, theta_remain, convergence_list = cordic(1, 0, math.pi/4, m=1, iterations=32, mode='rotation')
@@ -215,18 +340,18 @@ if __name__ == "__main__":
     # ## ---- Linear rotation mode ---- ##
     # print(f"\n\n<Case3> Linear rotation mode")
     # y + xz
-    x = 89.44271910190582
-    y = 0
-    z = -0.005
+    # x = 89.44271910190582
+    # y = 0
+    # z = -0.005
 
-    x_cordic, acc_cordic, theta_remain, convergence_list = cordic_mac(x, y, z, iterations=32)
-    print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
+    # x_cordic, acc_cordic, theta_remain, convergence_list = cordic_mac(x, y, z, iterations=32)
+    # print(f"x: {x_cordic}, acc: {acc_cordic}, theta: {theta_remain}")
 
     
-    acc_true = y + x * z
+    # acc_true = y + x * z
 
-    acc_error = abs(acc_cordic - acc_true)
-    print(f"Error:  acc error={acc_error}")
+    # acc_error = abs(acc_cordic - acc_true)
+    # print(f"Error:  acc error={acc_error}")
 
 
     ## ---- Linear vectoring mode ---- ##
@@ -246,15 +371,15 @@ if __name__ == "__main__":
     # print(f"Error:  div error={div_error}")
 
 
-    # ## ---- Hyperbolic rotation mode ---- ##
-    # print(f"\n\n<Case5> Hyperbolic rotation mode")
-    # # coshz + sinhz = exp(z)
-    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, 0.4, m=-1, iterations=32, mode='rotation')
-    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
-    # exp_true = math.exp(0.4)
+    ## ---- Hyperbolic rotation mode ---- ##
+    print(f"\n\n<Case5> Hyperbolic rotation mode")
+    # coshz + sinhz = exp(z)
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, 0.4, m=-1, iterations=32, mode='rotation')
+    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+    exp_true = math.exp(0.4)
 
-    # exp_error = abs(exp1_cordic - exp_true)
-    # print(f"Error: exp(z) error={exp_error}")
+    exp_error = abs(exp1_cordic - exp_true)
+    print(f"Error: exp(z) error={exp_error}")
 
     # value = -1.2
     # frac_part, int_part = np.modf(value)
@@ -272,7 +397,7 @@ if __name__ == "__main__":
     
 
     # ## ---- Hyperbolic vectoring mode ---- ##
-    # NOTE: y/x must in range [-1, 1]
+    # # NOTE: y/x must in range [-1, 1]
     # print(f"\n\n<Case6> Hyperbolic vectoring mode")
     # # sqrt(x^2 - y^2), tanh-1(y)
     # square_cordic, y_remain, tanh_cordic, convergence_list = cordic(4, 2, 0, m=-1, iterations=32, mode='vectoring')
@@ -303,11 +428,11 @@ if __name__ == "__main__":
 
 
     # Plot convergence
-    plt.plot(range(len(convergence_list)), [abs(t) for t in convergence_list], marker='o')
-    plt.yscale('log')
-    plt.xlabel('Iteration')
-    plt.ylabel('Residual θ (rad, log scale)')
-    plt.title('CORDIC Convergence of θ (Target = π/4)')
-    plt.grid(True)
-    plt.show()
+    # plt.plot(range(len(convergence_list)), [abs(t) for t in convergence_list], marker='o')
+    # plt.yscale('log')
+    # plt.xlabel('Iteration')
+    # plt.ylabel('Residual θ (rad, log scale)')
+    # plt.title('CORDIC Convergence of θ (Target = π/4)')
+    # plt.grid(True)
+    # plt.show()
 

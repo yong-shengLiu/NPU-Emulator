@@ -9,6 +9,14 @@ from Cordic import cordic
 from Cordic import cordic_sqrt
 from Cordic import cordic_reciprocal
 from Cordic import cordic_mac
+from Cordic import cordic_q8
+from Cordic import float_to_q8
+
+def fixQ8_to_float(x: np.ndarray) -> np.ndarray:
+    """
+    Convert fixed-point Q8(8bit fraction) to float32.
+    """
+    return x.astype(np.float32) / 256.0
 
 def float_to_q8_8(x):
     scale = 2 ** 8  # frac8
@@ -39,7 +47,6 @@ def float_to_q4_11(value):
 
     return fixed_val
 
-
 def q4_11_to_float(fixed_val):
     """
     Convert Q4.11 fixed-point back to float
@@ -49,14 +56,11 @@ def q4_11_to_float(fixed_val):
 
     return fixed_val / (2**11)
 
-
 def sigmoid(x):
     return 1/(1+np.exp(-x))
 
-
 def tanh(x):
     return np.tanh(x)
-
 
 def RELU(x):
     x1=[]
@@ -70,6 +74,9 @@ def RELU(x):
     return x1
 
 
+"""
+Softmax Related
+"""
 def softmax_test_patterns():
     return [
         np.array([1.0, 1.0, 1.0, 1.0]),                  #  1: uniform
@@ -115,52 +122,100 @@ def SoftMax_Tensor(x):
 
     return int8_softmax_x
 
-
-def softmax_quantized(x):
+def softmax_golden(x):
     """
-    NOTE: the quantized Softmax
-    (1) input 8b, output 8b, intermediate 16b(8int + 8frac)
+    NOTE: the softmax without quantization, the input dimension is 4D tensor (batch, headm sequence(col), sequence(row))
     """
-    log2e = 1.5
+    # find row maximum
+    row_max = np.max(x, axis=-1, keepdims=True)
 
-    # find maximum
-    maximum = np.max(x)
-    
-    # Calculate different
-    diff = x - maximum
-    diff_frac_part, diff_int_part = np.modf(diff)
+    diff = x - row_max
 
-    # Exponential
-    exp_diff_list = []
+    exp_diff = np.exp(diff)
 
-    for i in range(len(diff)):
-        e_int = 2**(diff_int_part[i] * log2e)  # TODO: the odd cannot shift, need to used LUT
+    summation = exp_diff.sum(axis=-1, keepdims=True)
 
-        exp_diff, _, _, _ = cordic(e_int, e_int, diff_frac_part[i], m=-1, iterations=32, mode='rotation')
-
-        # exp_diff_list.append(e_int * e_frac)
-        exp_diff_list.append(exp_diff)
-
-    exp_diff = np.array(exp_diff_list)
-
-    print("diff:", diff)
-    print("Exp. diff Cordic:", exp_diff)
-
-
-    # Summation and divide
-    summation = np.sum(exp_diff)
-
-    # cordic approximation of inverse
-    softmax_list = []
-    for exp_d in exp_diff:
-        _, _, div_cordic, _ = cordic(summation, exp_d, 0, m=0, iterations=32, mode='vectoring')
-        softmax_list.append(div_cordic)
-
-    print("Softmax Cordic:", softmax_list)
-    
-    softmax_x = np.array(softmax_list)
+    softmax_x = exp_diff / summation
 
     return softmax_x
+
+def softmax_quantized(x, mask):
+    """
+    NOTE: the quantized Softmax, the input dimension is 4D tensor (batch, headm sequence(col), sequence(row))
+          along the last dimension (head_size) to do softmax
+    (1) input x dtype is fix(8, 8)
+    (2) intermediate ??
+    (3) output softmax_result dtype is fix(0, 8)
+    """
+    # find row maximum
+    row_max = np.max(x, axis=-1, keepdims=True)
+    
+    # Calculate different
+    diff = x - row_max
+    
+    # take log2e
+    int_frac = diff + diff >> 1 # diff * log2e (log2e = 1.5)
+
+    # causal mask
+    int_frac[mask] = -2**15
+    
+    # split integer and fractional part
+    integer_part = int_frac.astype(np.int32) >> 8
+    decimal_part = int_frac - (integer_part << 8)
+    
+    # Exponential (2^(x*log2e) = 2^integer * 2^fractional)
+    exponential = ( ( np.ones_like(integer_part, dtype=np.int32) << 8) >> (-integer_part) )                      # integer part
+    exponential = (exponential * ( (np.ones_like(decimal_part, dtype=np.int32) << 8) + (decimal_part>>1) ) >> 8) # integer part * fractional part  (e^frac ~ 1 + frac/2)
+
+    # summation and division
+    summation = exponential.sum(axis=-1, keepdims=True)
+    softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
+
+    return softmax_result
+
+def cordic_wrapper(theta):
+    exp1, exp2, theta_remain, conv = cordic_q8(float_to_q8(1), float_to_q8(1), theta, m=-1, iterations=8, mode='rotation')
+    return exp1
+def softmax_quantized_cordic(x, mask):
+    """
+    NOTE: the quantized Cordic Softmax, the input dimension is 4D tensor (batch, headm sequence(col), sequence(row))
+          along the last dimension (head_size) to do softmax
+    (1) input x dtype is fix(8, 8)
+    (2) intermediate ??
+    (3) output softmax_result dtype is fix(0, 8)
+    """
+    # find row maximum
+    row_max = np.max(x, axis=-1, keepdims=True)
+    
+    # Calculate different
+    diff = x - row_max
+    
+    # take log2e
+    int_frac = diff + diff >> 1 # diff * log2e (log2e = 1.5)
+
+    # causal mask
+    int_frac[mask] = -2**15
+    print(int_frac)
+
+    # cordic approximation of exponentials
+    vec_cordic = np.vectorize(cordic_wrapper)
+    exponential = vec_cordic(int_frac)
+    print(exponential)
+    
+
+    # # split integer and fractional part
+    # integer_part = int_frac.astype(np.int32) >> 8
+    # decimal_part = int_frac - (integer_part << 8)
+    
+    # # Exponential (2^(x*log2e) = 2^integer * 2^fractional)
+    # exponential = ( ( np.ones_like(integer_part, dtype=np.int32) << 8) >> (-integer_part) )                      # integer part
+    # exponential = (exponential * ( (np.ones_like(decimal_part, dtype=np.int32) << 8) + (decimal_part>>1) ) >> 8) # integer part * fractional part  (e^frac ~ 1 + frac/2)
+
+    # # summation and division
+    # summation = exponential.sum(axis=-1, keepdims=True)
+    # softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
+
+    # return softmax_result
 
 def SoftMax(x):
     """
@@ -302,16 +357,15 @@ def SoftMax_3(x):
     return softmax_x
 
 
+
 def GELU(x):
     return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
-
 
 def Sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
-
 
 def layernorm_test_patterns():
     return [
@@ -520,16 +574,22 @@ if __name__ == "__main__":
     print("=== SFU testbench ===")
     
     ### ---------- softmax quantization ---------- ###
-    np.random.seed(42)
-    logits = np.random.randint(-128, 128, (2, 5), dtype=np.int8)
-    print("Int8 Input logits:\n", logits)
+    QK   = np.load("SM_input_fix88.npy")
+    mask = np.load("SM_mask.npy")
+    softmax_result = softmax_quantized(QK, mask)
+    f_softmax_result = fixQ8_to_float(softmax_result)
+    # print(QK)
+    # print(f_QK)
+    # print(f_softmax_result)
+    
+    f_QK = fixQ8_to_float(QK)
+    softmax_golden_result = softmax_golden(f_QK)
+    # print(softmax_golden_result)
 
-    x = torch.tensor(logits, dtype=torch.float32)
+    mes = MSE(softmax_golden_result, f_softmax_result)
+    print(f"MSE: {mes}")
 
-    print(x, x.shape)
-    SoftMax_Tensor(x)
-    # print('softmax_quantized: ', softmax_quantized(arr_int8))
-
+    softmax_quantized_cordic(QK, mask)
 
     # ### ---------- SoftMax Benchmarking ---------- ###
     # mse_1_list = []
