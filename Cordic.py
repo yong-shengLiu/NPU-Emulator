@@ -16,6 +16,8 @@ def q8_to_float(x_q8: int) -> float:
 
 def float_to_q16(x: float) -> int:
     return int(round(x * (1 << 16)))
+def q16_to_float(x_q16: int) -> float:
+    return x_q16 / (1 << 16)
 
 def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
     """
@@ -40,7 +42,7 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
     elif m == 0:
         LUT_table = [float_to_q8(2**-i) for i in range(iterations)] # 2^-i
     elif m == -1:
-        LUT_table = [float_to_q8(math.atanh(2**-i)) for i in hyperbolic_iteration[:iterations]]
+        LUT_table = [int(round(math.atanh(2**-i) * 256)) for i in hyperbolic_iteration[:iterations]]
     else:
         raise ValueError("Invalid m parameter")
     # print(f"LUT_table: {LUT_table}")
@@ -55,6 +57,8 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
         K = 1.0
     elif m == -1:
         for i in hyperbolic_iteration[:iterations]:
+            if theta_q8 == 0:
+                break
             K *= 1 / math.sqrt(1 - 2**(-2*i))
     else:
         raise ValueError("Invalid m")
@@ -64,24 +68,27 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
     # Perform iterative rotation
     if m == -1:
         for i in range(iterations):
+            if theta_q8 == 0:
+                # print(f"Early stop at iteration {i}, theta almost 0")
+                break
+            
             idx = hyperbolic_iteration[i]
             if mode == "rotation":
-                di = 1.0 if theta_q8 >= 0 else -1.0
+                di = 1 if theta_q8 >= 0 else -1
                 convergence_list.append(theta_q8)
             elif mode == "vectoring":
-                di = -1.0 if y >= 0 else 1.0
+                di = -1 if y >= 0 else 1
                 convergence_list.append(y)
             else:
                 raise ValueError("Invalid mode")
             
-
-            x_new = x_q8 + (int(di * y_q8) >> idx)
-            y_new = y_q8 + (int(di * x_q8) >> idx)
+            x_new = x_q8 + ((di * y_q8) >> idx)
+            y_new = y_q8 + ((di * x_q8) >> idx)
             theta_q8 -= di * LUT_table[i]
             # theta -= di * LUT_table[idx]
             x_q8, y_q8 = x_new, y_new
-
-            print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
+            print(f'x_q8: {q8_to_float(x_q8)}, y_q8: {q8_to_float(y_q8)}, theta_q8: {q8_to_float(theta_q8)}, idx: {idx}, LUT: {q8_to_float(LUT_table[i])}')
+            # print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
     else:
         for i in range(iterations):
             # Early termination: y is already close enough to 0
@@ -113,9 +120,39 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
     # print(f"Final K: {K}")
     # Output with gain compensation
     if m == 1 or m == -1:
-        return (x_q8 * K)>>8, (y_q8 * K)>>8, theta_q8, convergence_list
+        # print(f'Before K compensation: x: {x_q8}, y: {y_q8}, theta: {theta_q8}')
+        return int(x_q8 * K)>>8, int(y_q8 * K)>>8, theta_q8, convergence_list
+        # return int(x_q8 * K)>>16, int(y_q8 * K)>>16, theta_q8, convergence_list
+        # return ((x_q8 << 8) * K)>>24, ((y_q8 << 8) * K)>>24, theta_q8, convergence_list
+        # return (x_q8 * K)/256, (y_q8 * K)/256, theta_q8, convergence_list
     elif m == 0:
         return x_q8, y_q8, theta_q8, convergence_list
+
+def cordic_q8_exp(x_q8, log2e, iterations=8):
+    # print(x_q8)
+    # int_frac = x_q8 + (x_q8 >> 1) # x * log2e (log2e = 1.5)
+
+    float_val = x_q8 / 256.0
+    int_part = int(float_val)
+    frac_part = float_val - int_part
+    print(f'int_part: {int_part}, frac_part: {frac_part}')
+
+    temp = int_part + (int_part >> 1)
+    # print(f'temp: {temp}')
+    # temp = int_part # accuracy is more higer??
+    e_int = int((1<<8) >> (-temp))
+    # if temp < 0:
+    #     temp = -temp
+    #     e_int = int((1<<8) >> (temp))
+    # else:
+    #     e_int = int((1<<8) << (temp))
+    print(f'e_int: {e_int}, q8_to_float: {q8_to_float(e_int)}')
+    # e_int = 2**(int_part * log2e)  # log2(e) ≈ 1.5
+    # e_int = float_to_q8(e_int)
+
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(e_int, e_int, float_to_q8(frac_part), m=-1, iterations=iterations, mode='rotation')
+    
+    return exp1_cordic, exp2_cordic, theta_remain, convergence_list
 
 def cordic(x, y, theta, m, iterations=1, mode='circular'):
     """
@@ -176,6 +213,7 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
             # theta -= di * LUT_table[idx]
             x, y = x_new, y_new
 
+            print(f'x: {x}, y: {y}, theta: {theta}, idx: {idx}, LUT: {LUT_table[i]}')
             # print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
     else:
         for i in range(iterations):
@@ -293,18 +331,25 @@ def cordic_mac(x, y, z, iterations=32):
 
 if __name__ == "__main__":
     print("=== Cordic testbench ===")
-    x = -128
+    q8x = -278
+    x = q8_to_float(q8x)
+    print(f'x: {x}')
     # coshz + sinhz = exp(z)
-    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(1), float_to_q8(1), float_to_q8(x), m=-1, iterations=8, mode='rotation')
+    # frac_part, int_part = np.modf(x)
+    # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(e_int), float_to_q8(e_int), float_to_q8(frac_part), m=-1, iterations=8, mode='rotation')
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(x), log2e=1.5, iterations=8)
     print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
     
     exp_true = math.exp(x)
-    print(f"True exp(z): {exp_true}, CORDIC exp(z): {q8_to_float(exp1_cordic)}")
+    print(f"Floating True exp({x}): {exp_true}, CORDIC exp({x}): {q8_to_float(exp1_cordic)}")
+    print(f"Q8       True exp({x}): {float_to_q8(exp_true)}, CORDIC exp({x}): {exp1_cordic}")
 
     exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
     print(f"Error: exp(z) error={exp_error}")
 
-    print(q8_to_float(-32768))
+    print(f'Cordic_q8 exp({x}) = {exp1_cordic}')
     ### ---- Circular rotation mode ---- ##
     # print(f"\n\n<Case1> Circular rotation mode")
     # # cos sin
@@ -372,28 +417,33 @@ if __name__ == "__main__":
 
 
     ## ---- Hyperbolic rotation mode ---- ##
-    print(f"\n\n<Case5> Hyperbolic rotation mode")
+    print(f"\n\n<Case5> Hyperbolic rotation mode (EXP)")
     # coshz + sinhz = exp(z)
-    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, 0.4, m=-1, iterations=32, mode='rotation')
-    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
-    exp_true = math.exp(0.4)
+    # x = 0.5
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, x, m=-1, iterations=32, mode='rotation')
+    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+    # exp_true = math.exp(x)
 
-    exp_error = abs(exp1_cordic - exp_true)
-    print(f"Error: exp(z) error={exp_error}")
+    # exp_error = abs(exp1_cordic - exp_true)
+    # print(f"Error: exp(z) error={exp_error}")
 
-    # value = -1.2
-    # frac_part, int_part = np.modf(value)
+    value = -1.0859375
+    frac_part, int_part = np.modf(value)
+    print(f'int_part: {int_part}, frac_part: {frac_part}')
     # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
+    print(int_part * 1.5)
+    e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+    print(f'e_int: {e_int}')
 
-    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
-    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
+    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
 
-    # exp_true = math.exp(value)
-    # error = abs(exp1_cordic - exp_true)
+    exp_true = math.exp(value)
+    error = abs(exp1_cordic - exp_true)
 
-    # print(f"CORDIC exp(-70) = {exp1_cordic}")
-    # print(f"True exp(-70)   = {exp_true}")
-    # print(f"Error           = {error}")
+    print(f"CORDIC exp({value}) = {exp1_cordic}, {float_to_q8(exp1_cordic)} in Q8")
+    print(f"True exp({value})   = {exp_true}, {float_to_q8(exp_true)} in Q8")
+    print(f"Error           = {error}")
     
 
     # ## ---- Hyperbolic vectoring mode ---- ##
@@ -436,3 +486,5 @@ if __name__ == "__main__":
     # plt.grid(True)
     # plt.show()
 
+    print(float_to_q8(0.1767766952966369))
+    print(q8_to_float(45))

@@ -9,7 +9,7 @@ from Cordic import cordic
 from Cordic import cordic_sqrt
 from Cordic import cordic_reciprocal
 from Cordic import cordic_mac
-from Cordic import cordic_q8
+from Cordic import cordic_q8_exp
 from Cordic import float_to_q8
 
 def fixQ8_to_float(x: np.ndarray) -> np.ndarray:
@@ -154,7 +154,7 @@ def softmax_quantized(x, mask):
     diff = x - row_max
     
     # take log2e
-    int_frac = diff + diff >> 1 # diff * log2e (log2e = 1.5)
+    int_frac = diff + (diff >> 1) # diff * log2e (log2e = 1.5)
 
     # causal mask
     int_frac[mask] = -2**15
@@ -173,8 +173,8 @@ def softmax_quantized(x, mask):
 
     return softmax_result
 
-def cordic_wrapper(theta):
-    exp1, exp2, theta_remain, conv = cordic_q8(float_to_q8(1), float_to_q8(1), theta, m=-1, iterations=8, mode='rotation')
+def cordic_wrapper(x_q8):
+    exp1, exp2, theta_remain, conv = cordic_q8_exp(x_q8, log2e=1.5, iterations=8)
     return exp1
 def softmax_quantized_cordic(x, mask):
     """
@@ -189,17 +189,14 @@ def softmax_quantized_cordic(x, mask):
     
     # Calculate different
     diff = x - row_max
-    
-    # take log2e
-    int_frac = diff + diff >> 1 # diff * log2e (log2e = 1.5)
-
+    # print(diff)
     # causal mask
-    int_frac[mask] = -2**15
-    print(int_frac)
-
+    diff[mask] = -2**15
+    print(diff)
+    
     # cordic approximation of exponentials
     vec_cordic = np.vectorize(cordic_wrapper)
-    exponential = vec_cordic(int_frac)
+    exponential = vec_cordic(diff)
     print(exponential)
     
 
@@ -211,11 +208,11 @@ def softmax_quantized_cordic(x, mask):
     # exponential = ( ( np.ones_like(integer_part, dtype=np.int32) << 8) >> (-integer_part) )                      # integer part
     # exponential = (exponential * ( (np.ones_like(decimal_part, dtype=np.int32) << 8) + (decimal_part>>1) ) >> 8) # integer part * fractional part  (e^frac ~ 1 + frac/2)
 
-    # # summation and division
-    # summation = exponential.sum(axis=-1, keepdims=True)
-    # softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
+    # summation and division
+    summation = exponential.sum(axis=-1, keepdims=True)
+    softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
 
-    # return softmax_result
+    return softmax_result
 
 def SoftMax(x):
     """
@@ -576,20 +573,25 @@ if __name__ == "__main__":
     ### ---------- softmax quantization ---------- ###
     QK   = np.load("SM_input_fix88.npy")
     mask = np.load("SM_mask.npy")
+
+    f_QK = fixQ8_to_float(QK)
+    softmax_golden_result = softmax_golden(f_QK)
+    # print(softmax_golden_result)
+
     softmax_result = softmax_quantized(QK, mask)
     f_softmax_result = fixQ8_to_float(softmax_result)
     # print(QK)
     # print(f_QK)
     # print(f_softmax_result)
-    
-    f_QK = fixQ8_to_float(QK)
-    softmax_golden_result = softmax_golden(f_QK)
-    # print(softmax_golden_result)
-
     mes = MSE(softmax_golden_result, f_softmax_result)
     print(f"MSE: {mes}")
 
-    softmax_quantized_cordic(QK, mask)
+    # print(QK)
+    cordic_softmax_result = softmax_quantized_cordic(QK, mask)
+    f_cordic_softmax_result = fixQ8_to_float(cordic_softmax_result)
+    # print(cordic_softmax_result)
+    mes = MSE(softmax_golden_result, f_cordic_softmax_result)
+    print(f"Cordic MSE: {mes}")
 
     # ### ---------- SoftMax Benchmarking ---------- ###
     # mse_1_list = []
