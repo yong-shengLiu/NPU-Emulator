@@ -155,6 +155,7 @@ def softmax_quantized(x, mask):
     
     # take log2e
     int_frac = diff + (diff >> 1) # diff * log2e (log2e = 1.5)
+    # int_frac = diff + diff >> 1 # diff * log2e (log2e = 1.5)
 
     # causal mask
     int_frac[mask] = -2**15
@@ -576,22 +577,24 @@ if __name__ == "__main__":
 
     f_QK = fixQ8_to_float(QK)
     softmax_golden_result = softmax_golden(f_QK)
-    # print(softmax_golden_result)
+    print("TEST")
+    print(softmax_golden_result)
 
     softmax_result = softmax_quantized(QK, mask)
     f_softmax_result = fixQ8_to_float(softmax_result)
     # print(QK)
     # print(f_QK)
-    # print(f_softmax_result)
+    # print("TEST")
+    # print(softmax_result / 255.0)
     mes = MSE(softmax_golden_result, f_softmax_result)
-    print(f"MSE: {mes}")
+    # print(f"MSE: {mes}")
 
     # print(QK)
     cordic_softmax_result = softmax_quantized_cordic(QK, mask)
     f_cordic_softmax_result = fixQ8_to_float(cordic_softmax_result)
     # print(cordic_softmax_result)
     mes = MSE(softmax_golden_result, f_cordic_softmax_result)
-    print(f"Cordic MSE: {mes}")
+    # print(f"Cordic MSE: {mes}")
 
     # ### ---------- SoftMax Benchmarking ---------- ###
     # mse_1_list = []

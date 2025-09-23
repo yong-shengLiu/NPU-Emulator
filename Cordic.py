@@ -87,7 +87,7 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
             theta_q8 -= di * LUT_table[i]
             # theta -= di * LUT_table[idx]
             x_q8, y_q8 = x_new, y_new
-            print(f'x_q8: {q8_to_float(x_q8)}, y_q8: {q8_to_float(y_q8)}, theta_q8: {q8_to_float(theta_q8)}, idx: {idx}, LUT: {q8_to_float(LUT_table[i])}')
+            # print(f'x_q8: {q8_to_float(x_q8)}, y_q8: {q8_to_float(y_q8)}, theta_q8: {q8_to_float(theta_q8)}, idx: {idx}, LUT: {q8_to_float(LUT_table[i])}')
             # print(f"y{i}_{hyperbolic_iteration[i]}: {y_new}")
     else:
         for i in range(iterations):
@@ -135,7 +135,7 @@ def cordic_q8_exp(x_q8, log2e, iterations=8):
     float_val = x_q8 / 256.0
     int_part = int(float_val)
     frac_part = float_val - int_part
-    print(f'int_part: {int_part}, frac_part: {frac_part}')
+    # print(f'int_part: {int_part}, frac_part: {frac_part}')
 
     temp = int_part + (int_part >> 1)
     # print(f'temp: {temp}')
@@ -146,7 +146,7 @@ def cordic_q8_exp(x_q8, log2e, iterations=8):
     #     e_int = int((1<<8) >> (temp))
     # else:
     #     e_int = int((1<<8) << (temp))
-    print(f'e_int: {e_int}, q8_to_float: {q8_to_float(e_int)}')
+    # print(f'e_int: {e_int}, q8_to_float: {q8_to_float(e_int)}')
     # e_int = 2**(int_part * log2e)  # log2(e) ≈ 1.5
     # e_int = float_to_q8(e_int)
 
