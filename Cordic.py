@@ -251,6 +251,24 @@ def cordic(x, y, theta, m, iterations=1, mode='circular'):
     elif m == 0:
         return x, y, theta, convergence_list
 
+def cordic_exp(value, iterations=32):
+
+    # value = value * 1.4426950408889634
+    # value = value * 1.5
+
+    frac_part, int_part = np.modf(value)
+    # print(f'int_part: {int_part}, frac_part: {frac_part}')
+    # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634 = 1.5 - 0.057305
+    # print(int_part * 1.5)
+    e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+    # e_int = 2**(int_part * 1.4375)  # log2(e) ≈ 1.5
+    # e_int = 2**(int_part)  # log2(e) ≈ 1.5
+    print(f'e_int: {e_int}, frac_part: {frac_part}')
+
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=iterations, mode='rotation')
+
+    return exp1_cordic, exp2_cordic, theta_remain, convergence_list
+
 def cordic_sqrt(x, threshold=4, scale=1024, iterations=32):
 
     if x < 1e-10:
@@ -329,67 +347,102 @@ def cordic_mac(x, y, z, iterations=32):
 
     return x_cordic, acc_cordic, theta_remain, convergence_list
 
-def analyze_cordic():
-    def cordic_sin_cos(theta, iterations=16):
-        # 簡單範例：只示意，不一定跟你實作完全相同
-        K = 0.607252935 # CORDIC scaling factor (for many iterations)
-        angles = [math.atan(2**-i) for i in range(iterations)]
+def analyze_cordic(mode = 'cos_sin'):
+    
+    if mode == 'exp':
+        # convergence range: |theta| < atanh(1) ≈ 0.881
+        # x = np.linspace(-0.88, 0.88, 200)
+        # x = np.linspace(-0.99, 0.99, 800)
+        x = np.linspace(-50, 10, 800)
+        cordic_exp_list = []
+        # true_exp   = []
+        errors_exp = []
+
+        for t in x:
+            # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, t, m=-1, iterations=32, mode='rotation')
+            print(f'\nCalculating exp({t}):')
+            exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_exp(t, iterations=32)
+
+            cordic_exp_list.append(exp1_cordic)
+            # true_sin.append(math.cos(t))
+            errors_exp.append(abs(exp1_cordic - math.exp(t)))
+            print(f't: {t}, exp_cordic: {exp1_cordic}, exp_true: {math.exp(t)}, error: {errors_exp[-1]}')
         
-        x, y, z = K, 0.0, theta
-        for i in range(iterations):
-            di = 1 if z >= 0 else -1
-            x = x - di * y * (2**-i)
-            y = y + di * x * (2**-i)
-            z = z - di * angles[i]
-        return x, y  # cos(theta), sin(theta)
+        plt.plot(x, errors_exp, label="exp error")
+        plt.xlabel("theta (rad)")
+        plt.ylabel("Absolute Error")
+        # plt.title("CORDIC exp error")
+        plt.title("exp error")
+        plt.legend()
+        plt.show()
 
-    # 測試範圍
-    thetas = np.linspace(-math.pi/2, math.pi/2, 200)
-    cordic_sin = []
-    true_sin = []
-    errors = []
+        print("exp 最大誤差:", max(errors_exp))
+        print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
 
-    for t in thetas:
-        _, s = cordic_sin_cos(t, iterations=16)
-        cordic_sin.append(s)
-        true_sin.append(math.sin(t))
-        errors.append(abs(s - math.sin(t)))
+    if mode == 'cos_sin':
+        # convergence range: -π/2 ~ π/2
+        thetas = np.linspace(-math.pi/2, math.pi/2, 200)
+        cordic_sin = []
+        # true_sin   = []
+        errors_sin = []
 
-    # 畫誤差圖
-    plt.plot(thetas, errors)
-    plt.xlabel("theta (rad)")
-    plt.ylabel("Absolute Error")
-    plt.title("CORDIC sin error vs math.sin")
-    plt.show()
+        cordic_cos = []
+        # true_cos   = []
+        errors_cos = []
 
-    print("最大誤差:", max(errors))
-    print("平均誤差:", sum(errors)/len(errors))
+        for t in thetas:
+            cos_cordic, sin_cordic, theta_remain, convergence_list = cordic(1, 0, t, m=1, iterations=32, mode='rotation')
 
+            cordic_sin.append(sin_cordic)
+            # true_sin.append(math.sin(t))
+            errors_sin.append(abs(sin_cordic - math.sin(t)))
+
+            cordic_cos.append(cos_cordic)
+            # true_sin.append(math.cos(t))
+            errors_cos.append(abs(cos_cordic - math.cos(t)))
+        
+        plt.plot(thetas, errors_sin, label="sin error")
+        plt.plot(thetas, errors_cos, label="cos error")
+        plt.xlabel("theta (rad)")
+        plt.ylabel("Absolute Error")
+        plt.title("CORDIC sin & cos error")
+        plt.legend()
+        plt.show()
+
+        print("sin 最大誤差:", max(errors_sin))
+        print("sin 平均誤差:", sum(errors_sin)/len(errors_sin))
+        print("cos 最大誤差:", max(errors_cos))
+        print("cos 平均誤差:", sum(errors_cos)/len(errors_cos))
 
 if __name__ == "__main__":
     print("=== Cordic testbench ===")
 
-    analyze_cordic()
-    q8x = -278
-    x = q8_to_float(q8x)
-    print(f'x: {x}')
-    # coshz + sinhz = exp(z)
-    # frac_part, int_part = np.modf(x)
-    # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+    # analyze_cordic(mode = 'cos_sin')
+    analyze_cordic(mode = 'exp')
 
-    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(e_int), float_to_q8(e_int), float_to_q8(frac_part), m=-1, iterations=8, mode='rotation')
-    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(x), log2e=1.5, iterations=8)
-    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+
+
+    # q8x = -278
+    # x = q8_to_float(q8x)
+    # print(f'x: {x}')
+    # # coshz + sinhz = exp(z)
+    # # frac_part, int_part = np.modf(x)
+    # # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+
+    # # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(e_int), float_to_q8(e_int), float_to_q8(frac_part), m=-1, iterations=8, mode='rotation')
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(x), log2e=1.5, iterations=8)
+    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
     
-    exp_true = math.exp(x)
-    print(f"Floating True exp({x}): {exp_true}, CORDIC exp({x}): {q8_to_float(exp1_cordic)}")
-    print(f"Q8       True exp({x}): {float_to_q8(exp_true)}, CORDIC exp({x}): {exp1_cordic}")
+    # exp_true = math.exp(x)
+    # print(f"Floating True exp({x}): {exp_true}, CORDIC exp({x}): {q8_to_float(exp1_cordic)}")
+    # print(f"Q8       True exp({x}): {float_to_q8(exp_true)}, CORDIC exp({x}): {exp1_cordic}")
 
-    exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
-    print(f"Error: exp(z) error={exp_error}")
+    # exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
+    # print(f"Error: exp(z) error={exp_error}")
 
-    print(f'Cordic_q8 exp({x}) = {exp1_cordic}')
-    ### ---- Circular rotation mode ---- ##
+    # print(f'Cordic_q8 exp({x}) = {exp1_cordic}')
+
+    # ## ---- Circular rotation mode ---- ##
     # print(f"\n\n<Case1> Circular rotation mode")
     # # cos sin
     # cos_cordic, sin_cordic, theta_remain, convergence_list = cordic(1, 0, math.pi/4, m=1, iterations=32, mode='rotation')
@@ -466,7 +519,8 @@ if __name__ == "__main__":
     # exp_error = abs(exp1_cordic - exp_true)
     # print(f"Error: exp(z) error={exp_error}")
 
-    value = -1.0859375
+    value = -20.55
+    # value = 9
     frac_part, int_part = np.modf(value)
     print(f'int_part: {int_part}, frac_part: {frac_part}')
     # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
@@ -524,6 +578,3 @@ if __name__ == "__main__":
     # plt.title('CORDIC Convergence of θ (Target = π/4)')
     # plt.grid(True)
     # plt.show()
-
-    print(float_to_q8(0.1767766952966369))
-    print(q8_to_float(45))
