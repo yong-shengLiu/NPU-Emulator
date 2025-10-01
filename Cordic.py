@@ -8,6 +8,10 @@ Q8 Coversion
 FRAC_BITS = 8   # Q8 小數位
 SCALE = 1 << FRAC_BITS
 
+
+"""
+Useful conversion functions
+"""
 def float_to_q8(x: float) -> int:
     return int(round(x * SCALE))
 
@@ -16,9 +20,24 @@ def q8_to_float(x_q8: int) -> float:
 
 def float_to_q16(x: float) -> int:
     return int(round(x * (1 << 16)))
+
 def q16_to_float(x_q16: int) -> float:
     return x_q16 / (1 << 16)
 
+def near_even(x):
+    lower = math.floor(x / 2) * 2   # 向下最近偶數
+    upper = lower + 2                # 向上最近偶數
+
+    # 比較哪個更接近 x
+    if abs(x - lower) <= abs(x - upper):
+        return lower
+    else:
+        return upper
+
+
+"""
+Q88 CORDIC implementation
+"""
 def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
     """
     NOTE: the input x, y, theta are all in Q8 format (fixed-point with 8 fractional bits)
@@ -127,18 +146,19 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
         # return (x_q8 * K)/256, (y_q8 * K)/256, theta_q8, convergence_list
     elif m == 0:
         return x_q8, y_q8, theta_q8, convergence_list
-
+    
 def cordic_q8_exp(x_q8, log2e, iterations=8):
-    # print(x_q8)
-    # int_frac = x_q8 + (x_q8 >> 1) # x * log2e (log2e = 1.5)
+    
+    # Q8.8 fixed-point to float
+    x = q8_to_float(x_q8)
 
-    float_val = x_q8 / 256.0
-    int_part = int(float_val)
-    frac_part = float_val - int_part
-    # print(f'int_part: {int_part}, frac_part: {frac_part}')
+    int_part = near_even(x)
+    frac_part = x - int_part
 
+    print(f"x_q8={x_q8}, int_part={int_part}, frac_part={frac_part}")
+    
     temp = int_part + (int_part >> 1)
-    # print(f'temp: {temp}')
+    print(f'temp: {temp}')
     # temp = int_part # accuracy is more higer??
     e_int = int((1<<8) >> (-temp))
     # if temp < 0:
@@ -154,6 +174,10 @@ def cordic_q8_exp(x_q8, log2e, iterations=8):
     
     return exp1_cordic, exp2_cordic, theta_remain, convergence_list
 
+
+"""
+Floating-point CORDIC implementation
+"""
 def cordic(x, y, theta, m, iterations=1, mode='circular'):
     """
     NOTE
@@ -263,7 +287,7 @@ def cordic_exp(value, iterations=32):
     e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
     # e_int = 2**(int_part * 1.4375)  # log2(e) ≈ 1.5
     # e_int = 2**(int_part)  # log2(e) ≈ 1.5
-    print(f'e_int: {e_int}, frac_part: {frac_part}')
+    # print(f'e_int: {e_int}, frac_part: {frac_part}')
 
     exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=iterations, mode='rotation')
 
@@ -347,13 +371,140 @@ def cordic_mac(x, y, z, iterations=32):
 
     return x_cordic, acc_cordic, theta_remain, convergence_list
 
-def analyze_cordic(mode = 'cos_sin'):
+def exp_quantized(x_q8):
+    """
+    Quantized exponential approximation for one Q8.8 input.
+    Input:  x_q8 (int or numpy int16) -- fixed-point Q8.8
+    Output: exp(x) approximated in Q0.8 format (0~1 range)
+    """
+
+    # 1. log2(e) ≈ 1.5 → x * log2(e) ≈ x + x/2
+    int_frac = x_q8 + (x_q8 >> 1)   # still in Q8.8
+
+    # 2. split into integer and fractional parts
+    integer_part = int_frac >> 8
+    frac_part = int_frac - (integer_part << 8)  # still Q8.8, range [0..255]
+
+    # 3. compute 2^integer_part
+    #    (1 << 8) represents "1.0 in Q0.8"
+    if integer_part < 0:
+        exp_int = (1 << 8) >> (-integer_part)
+    else:
+        exp_int = (1 << 8) << integer_part
+
+    # 4. approximate 2^fractional ≈ 1 + frac/2
+    exp_frac = (1 << 8) + (frac_part >> 1)  # Q0.8 + Q0.8
+
+    # 5. combine integer and fractional
+    exp_out = (exp_int * exp_frac) >> 8  # back to Q0.8
+
+    return exp_out
+
+
+"""
+Analyze function
+"""
+def analyze_cordic(mode = 'cos_sin_float'):
     
-    if mode == 'exp':
+    if mode == 'exp_compare':
+        """
+        Compare the approximation error between exp_normal and exp_Q88
+        """
+        # 測試範圍
+        x = np.linspace(-10, 0, 800)
+
+        # --- exp_normal ---
+        errors_exp_normal = []
+        for t in x:
+            exp_out = exp_quantized(float_to_q8(t))
+            errors_exp_normal.append(abs(q8_to_float(exp_out) - math.exp(t)))
+
+        # --- exp_Q88 ---
+        errors_exp_Q88 = []
+        for t in x:
+            exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(t), log2e=1.5, iterations=3)
+            errors_exp_Q88.append(abs(q8_to_float(exp1_cordic) - math.exp(t)))
+
+        # --- plot ---
+        plt.plot(x, errors_exp_normal, label="exp_quantized error")
+        plt.plot(x, errors_exp_Q88, label="cordic_q8_exp error")
+        plt.xlabel("x")
+        plt.ylabel("Absolute Error")
+        plt.title("exp approximation error comparison")
+        plt.legend()
+        plt.show()
+
+        # --- print 統計結果 ---
+        print("[exp_quantized] max error:", max(errors_exp_normal))
+        print("[exp_quantized] avg error:", sum(errors_exp_normal)/len(errors_exp_normal))
+        print("[cordic_q8_exp] max error:", max(errors_exp_Q88))
+        print("[cordic_q8_exp] avg error:", sum(errors_exp_Q88)/len(errors_exp_Q88))
+
+    if mode == 'exp_normal':
         # convergence range: |theta| < atanh(1) ≈ 0.881
         # x = np.linspace(-0.88, 0.88, 200)
-        # x = np.linspace(-0.99, 0.99, 800)
-        x = np.linspace(-50, 10, 800)
+        x = np.linspace(-10, 0, 800)
+        # x = np.linspace(-50, 10, 800)
+        cordic_exp_list = []
+        # true_exp   = []
+        errors_exp = []
+
+        for t in x:
+            # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, t, m=-1, iterations=32, mode='rotation')
+            print(f'\nCalculating exp({t}):')
+            exp_out = exp_quantized(float_to_q8(t))
+
+            cordic_exp_list.append(exp_out)
+            # true_sin.append(math.cos(t))
+            errors_exp.append(abs(q8_to_float(exp_out) - math.exp(t)))
+            print(f't: {t}, exp_cordic: {exp_out}, exp_true: {float_to_q8(math.exp(t))}, error: {errors_exp[-1]}')
+        
+        plt.plot(x, errors_exp, label="exp error")
+        plt.xlabel("theta (rad)")
+        plt.ylabel("Absolute Error")
+        # plt.title("CORDIC exp error")
+        plt.title("exp error")
+        plt.legend()
+        plt.show()
+
+        print("exp 最大誤差:", max(errors_exp))
+        print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
+
+    if mode == 'exp_Q88':
+        # convergence range: |theta| < atanh(1) ≈ 0.881
+        # x = np.linspace(-0.88, 0.88, 200)
+        x = np.linspace(-10, 0, 800)
+        # x = np.linspace(-50, 10, 800)
+        cordic_exp_list = []
+        # true_exp   = []
+        errors_exp = []
+
+        for t in x:
+            # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, t, m=-1, iterations=32, mode='rotation')
+            print(f'\nCalculating exp({t}):')
+            exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(t), log2e=1.5, iterations=8)
+
+            cordic_exp_list.append(exp1_cordic)
+            # true_sin.append(math.cos(t))
+            errors_exp.append(abs(q8_to_float(exp1_cordic) - math.exp(t)))
+            print(f't: {t}, exp_cordic: {exp1_cordic}, exp_true: {float_to_q8(math.exp(t))}, error: {errors_exp[-1]}')
+        
+        plt.plot(x, errors_exp, label="exp error")
+        plt.xlabel("theta (rad)")
+        plt.ylabel("Absolute Error")
+        # plt.title("CORDIC exp error")
+        plt.title("exp error")
+        plt.legend()
+        plt.show()
+
+        print("exp 最大誤差:", max(errors_exp))
+        print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
+
+    if mode == 'exp_flaot':
+        # convergence range: |theta| < atanh(1) ≈ 0.881
+        # x = np.linspace(-0.88, 0.88, 200)
+        x = np.linspace(-4, 2, 800)
+        # x = np.linspace(-50, 10, 800)
         cordic_exp_list = []
         # true_exp   = []
         errors_exp = []
@@ -379,7 +530,7 @@ def analyze_cordic(mode = 'cos_sin'):
         print("exp 最大誤差:", max(errors_exp))
         print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
 
-    if mode == 'cos_sin':
+    if mode == 'cos_sin_float':
         # convergence range: -π/2 ~ π/2
         thetas = np.linspace(-math.pi/2, math.pi/2, 200)
         cordic_sin = []
@@ -417,30 +568,34 @@ def analyze_cordic(mode = 'cos_sin'):
 if __name__ == "__main__":
     print("=== Cordic testbench ===")
 
-    # analyze_cordic(mode = 'cos_sin')
-    analyze_cordic(mode = 'exp')
+    # analyze_cordic(mode = 'cos_sin_float')
+    # analyze_cordic(mode = 'exp_float')
+    # analyze_cordic(mode = 'exp_Q88')
+    # analyze_cordic(mode = 'exp_normal')
+    analyze_cordic(mode = 'exp_compare')
 
 
 
-    # q8x = -278
-    # x = q8_to_float(q8x)
-    # print(f'x: {x}')
-    # # coshz + sinhz = exp(z)
-    # # frac_part, int_part = np.modf(x)
-    # # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+    q8x = -278
+    x = q8_to_float(q8x)
+    x = -0.5081351689612017
+    print(f'x: {x}')
+    # coshz + sinhz = exp(z)
+    # frac_part, int_part = np.modf(x)
+    # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
 
-    # # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(e_int), float_to_q8(e_int), float_to_q8(frac_part), m=-1, iterations=8, mode='rotation')
-    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(x), log2e=1.5, iterations=8)
-    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8(float_to_q8(e_int), float_to_q8(e_int), float_to_q8(frac_part), m=-1, iterations=8, mode='rotation')
+    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(x), log2e=1.5, iterations=5)
+    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
     
-    # exp_true = math.exp(x)
-    # print(f"Floating True exp({x}): {exp_true}, CORDIC exp({x}): {q8_to_float(exp1_cordic)}")
-    # print(f"Q8       True exp({x}): {float_to_q8(exp_true)}, CORDIC exp({x}): {exp1_cordic}")
+    exp_true = math.exp(x)
+    print(f"Floating True exp({x}): {exp_true}, CORDIC exp({x}): {q8_to_float(exp1_cordic)}")
+    print(f"Q8       True exp({x}): {float_to_q8(exp_true)}, CORDIC exp({x}): {exp1_cordic}")
 
-    # exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
-    # print(f"Error: exp(z) error={exp_error}")
+    exp_error = abs(q8_to_float(exp1_cordic) - exp_true)
+    print(f"Error: exp(z) error={exp_error}")
 
-    # print(f'Cordic_q8 exp({x}) = {exp1_cordic}')
+    print(f'Cordic_q8 exp({x}) = {exp1_cordic}')
 
     # ## ---- Circular rotation mode ---- ##
     # print(f"\n\n<Case1> Circular rotation mode")
@@ -508,35 +663,35 @@ if __name__ == "__main__":
     # print(f"Error:  div error={div_error}")
 
 
-    ## ---- Hyperbolic rotation mode ---- ##
-    print(f"\n\n<Case5> Hyperbolic rotation mode (EXP)")
-    # coshz + sinhz = exp(z)
-    # x = 0.5
-    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, x, m=-1, iterations=32, mode='rotation')
-    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
-    # exp_true = math.exp(x)
+    # ## ---- Hyperbolic rotation mode ---- ##
+    # print(f"\n\n<Case5> Hyperbolic rotation mode (EXP)")
+    # # coshz + sinhz = exp(z)
+    # # x = 0.5
+    # # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, x, m=-1, iterations=32, mode='rotation')
+    # # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp1_cordic}, theta: {theta_remain}")
+    # # exp_true = math.exp(x)
 
-    # exp_error = abs(exp1_cordic - exp_true)
-    # print(f"Error: exp(z) error={exp_error}")
+    # # exp_error = abs(exp1_cordic - exp_true)
+    # # print(f"Error: exp(z) error={exp_error}")
 
-    value = -20.55
-    # value = 9
-    frac_part, int_part = np.modf(value)
-    print(f'int_part: {int_part}, frac_part: {frac_part}')
-    # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
-    print(int_part * 1.5)
-    e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
-    print(f'e_int: {e_int}')
+    # value = -20.55
+    # # value = 9
+    # frac_part, int_part = np.modf(value)
+    # print(f'int_part: {int_part}, frac_part: {frac_part}')
+    # # e_int = 2**(int_part * 1.4426950408889634)  # log2(e) ≈ 1.4426950408889634
+    # print(int_part * 1.5)
+    # e_int = 2**(int_part * 1.5)  # log2(e) ≈ 1.5
+    # print(f'e_int: {e_int}')
 
-    exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
-    print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
+    # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(e_int, e_int, frac_part, m=-1, iterations=32, mode='rotation')
+    # print(f"exp1(z): {exp1_cordic}, exp2(z): {exp2_cordic}, theta: {theta_remain}")
 
-    exp_true = math.exp(value)
-    error = abs(exp1_cordic - exp_true)
+    # exp_true = math.exp(value)
+    # error = abs(exp1_cordic - exp_true)
 
-    print(f"CORDIC exp({value}) = {exp1_cordic}, {float_to_q8(exp1_cordic)} in Q8")
-    print(f"True exp({value})   = {exp_true}, {float_to_q8(exp_true)} in Q8")
-    print(f"Error           = {error}")
+    # print(f"CORDIC exp({value}) = {exp1_cordic}, {float_to_q8(exp1_cordic)} in Q8")
+    # print(f"True exp({value})   = {exp_true}, {float_to_q8(exp_true)} in Q8")
+    # print(f"Error           = {error}")
     
 
     # ## ---- Hyperbolic vectoring mode ---- ##
