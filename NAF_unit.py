@@ -19,8 +19,8 @@ def fixQ8_to_float(x: np.ndarray) -> np.ndarray:
     return x.astype(np.float32) / 256.0
 
 def float_to_q8_8(x):
-    scale = 2 ** 8  # frac8
-    fixed = torch.round(x * scale).to(torch.int16)  # 存成 16b
+    scale = 2**8
+    fixed = np.round(x * scale).astype(np.int16)
     return fixed
 
 def float_to_int8(x):
@@ -174,7 +174,7 @@ def softmax_quantized(x, mask):
 
     return softmax_result
 
-def cordic_wrapper(x_q8):
+def cordic_exp_wrapper(x_q8):
     exp1, exp2, theta_remain, conv = cordic_q8_exp(x_q8, log2e=1.5, iterations=8)
     return exp1
 def softmax_quantized_cordic(x, mask):
@@ -193,12 +193,12 @@ def softmax_quantized_cordic(x, mask):
     # print(diff)
     # causal mask
     diff[mask] = -2**15
-    print(diff)
+    # print(fixQ8_to_float(diff))
     
     # cordic approximation of exponentials
-    vec_cordic = np.vectorize(cordic_wrapper)
+    vec_cordic = np.vectorize(cordic_exp_wrapper)
     exponential = vec_cordic(diff)
-    print(exponential)
+    # print(fixQ8_to_float(exponential))
     
 
     # # split integer and fractional part
@@ -569,7 +569,7 @@ def MSE(golden, prediction):
 
 
 if __name__ == "__main__":
-    print("=== SFU testbench ===")
+    print("=== SFU testbench 2025.10.02 ===")
     
     ### ---------- softmax quantization ---------- ###
     QK   = np.load("SM_input_fix88.npy")
@@ -577,24 +577,25 @@ if __name__ == "__main__":
 
     f_QK = fixQ8_to_float(QK)
     softmax_golden_result = softmax_golden(f_QK)
+    # softmax_golden_result = float_to_q8_8(softmax_golden_result)
     print("TEST")
-    print(softmax_golden_result)
+    # print(softmax_golden_result)
 
     softmax_result = softmax_quantized(QK, mask)
     f_softmax_result = fixQ8_to_float(softmax_result)
     # print(QK)
     # print(f_QK)
     # print("TEST")
-    # print(softmax_result / 255.0)
+    # print(f_softmax_result)
     mes = MSE(softmax_golden_result, f_softmax_result)
-    # print(f"MSE: {mes}")
+    print(f"MSE: {mes}")
 
     # print(QK)
     cordic_softmax_result = softmax_quantized_cordic(QK, mask)
     f_cordic_softmax_result = fixQ8_to_float(cordic_softmax_result)
-    # print(cordic_softmax_result)
+    # print(f_cordic_softmax_result)
     mes = MSE(softmax_golden_result, f_cordic_softmax_result)
-    # print(f"Cordic MSE: {mes}")
+    print(f"Cordic MSE: {mes}")
 
     # ### ---------- SoftMax Benchmarking ---------- ###
     # mse_1_list = []
