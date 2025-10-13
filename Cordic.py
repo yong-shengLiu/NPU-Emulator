@@ -148,7 +148,7 @@ def cordic_q8(x_q8, y_q8, theta_q8, m, iterations=1, mode='circular'):
             y_new = y_q8 + (int(di * x_q8)     >> i)
             theta_q8 -= di * LUT_table[i]
             x_q8, y_q8 = x_new, y_new
-            print(f"theta{i}: {theta_q8}, x{i}: {x_q8}, y{i}: {y_q8}")
+            # print(f"theta{i}: {theta_q8}, x{i}: {x_q8}, y{i}: {y_q8}")
 
     # print(f"Final K: {K}")
     # Output with gain compensation
@@ -188,7 +188,7 @@ def cordic_q8_exp(x_q8, log2e, iterations=8):
     
     return exp1_cordic, exp2_cordic, theta_remain, convergence_list
 
-def cordic_q8_reciprocal(x, y, z, iterations=32):
+def cordic_q8_reciprocal(x, y, z, iterations=8):
     # z + y/x
     # if x < float_to_q8(0.25):
     #     print("x is too small, scale it up")
@@ -204,7 +204,7 @@ def cordic_q8_reciprocal(x, y, z, iterations=32):
     x_cordic, y_remain, div_cordic, convergence_list = cordic_q8(scale_x, y, z, m=0, iterations=iterations, mode='vectoring')
 
     # Compensate the gain
-    print(f'div_cordic: {div_cordic}')
+    # print(f'div_cordic: {div_cordic}')
     # if x < float_to_q8(0.25):
     #     # div_cordic = div_cordic * 512
     #     div_cordic = int(div_cordic) << 6
@@ -746,7 +746,7 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("cos 平均誤差:", sum(errors_cos)/len(errors_cos))
 
 if __name__ == "__main__":
-    print("=== Cordic testbench 2025.10.02 ===")
+    print("=== Cordic testbench 2025.10.13 ===")
 
     # analyze_cordic(mode = 'cos_sin_float')
     # analyze_cordic(mode = 'exp_float')
@@ -835,7 +835,8 @@ if __name__ == "__main__":
     print(f"\n\n<Case4> Linear vectoring mode")
     # z + y/x
     # x = 0.01118033988985804
-    x = 0.151980198019802
+    # x = 0.151980198019802
+    x = q8_to_float(378)
     y = 1
     z = 0
 

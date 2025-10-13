@@ -10,6 +10,7 @@ from Cordic import cordic_sqrt
 from Cordic import cordic_reciprocal
 from Cordic import cordic_mac
 from Cordic import cordic_q8_exp
+from Cordic import cordic_q8_reciprocal
 from Cordic import float_to_q8
 
 def fixQ8_to_float(x: np.ndarray) -> np.ndarray:
@@ -146,6 +147,7 @@ def softmax_quantized(x, mask):
     (1) input x dtype is fix(8, 8)
     (2) intermediate ??
     (3) output softmax_result dtype is fix(0, 8)
+    (4) the reciprocal use Fast Inverse Square Root (FISR)
     """
     # find row maximum
     row_max = np.max(x, axis=-1, keepdims=True)
@@ -167,16 +169,22 @@ def softmax_quantized(x, mask):
     # Exponential (2^(x*log2e) = 2^integer * 2^fractional)
     exponential = ( ( np.ones_like(integer_part, dtype=np.int32) << 8) >> (-integer_part) )                      # integer part
     exponential = (exponential * ( (np.ones_like(decimal_part, dtype=np.int32) << 8) + (decimal_part>>1) ) >> 8) # integer part * fractional part  (e^frac ~ 1 + frac/2)
+    # print("Normal Exp:", exponential)
 
     # summation and division
     summation = exponential.sum(axis=-1, keepdims=True)
-    softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
+
+    reciprocal_q8 = FISR_Q88((summation * summation) >> 8, iterations=3)
+    softmax_result = (exponential * reciprocal_q8) >> 8 # Softmax result in fix0_8 format
 
     return softmax_result
 
 def cordic_exp_wrapper(x_q8):
     exp1, exp2, theta_remain, conv = cordic_q8_exp(x_q8, log2e=1.5, iterations=8)
     return exp1
+def cordic_recip_wrapper(x_q8):
+    x_cordic, y_remain, div_cordic, convergence_list = cordic_q8_reciprocal(x_q8, float_to_q8(1), 0, iterations=8)
+    return div_cordic
 def softmax_quantized_cordic(x, mask):
     """
     NOTE: the quantized Cordic Softmax, the input dimension is 4D tensor (batch, headm sequence(col), sequence(row))
@@ -198,7 +206,7 @@ def softmax_quantized_cordic(x, mask):
     # cordic approximation of exponentials
     vec_cordic = np.vectorize(cordic_exp_wrapper)
     exponential = vec_cordic(diff)
-    # print(fixQ8_to_float(exponential))
+    # print("Cordic Exp:", exponential)
     
 
     # # split integer and fractional part
@@ -211,8 +219,15 @@ def softmax_quantized_cordic(x, mask):
 
     # summation and division
     summation = exponential.sum(axis=-1, keepdims=True)
-    softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
+    # print("Cordic Summation:", summation)
 
+    vec_cordic = np.vectorize(cordic_recip_wrapper)
+    # print("Cordic reciprocal:", vec_cordic(summation))
+    # print("Cordic Exp:", exponential)
+    
+    # softmax_result = (exponential * vec_cordic(summation) / 256).astype(np.uint8)
+    softmax_result = (exponential * vec_cordic(summation) / 256)
+    # softmax_result = (exponential * 255 / summation).astype(np.uint8) # Softmax result in fix0_8 format
     return softmax_result
 
 def SoftMax(x):
@@ -365,6 +380,10 @@ def Sigmoid(x):
 def selu(x, alpha = 1.6732, lambda_ = 1.0507):
     return np.where(x > 0, lambda_ * x, lambda_ * alpha * (np.exp(x) - 1))
 
+
+"""
+LayerNorm Related
+"""
 def layernorm_test_patterns():
     return [
         np.array([1.0, 1.0, 1.0, 1.0]),      # 1: uniform input (no variance)
@@ -400,7 +419,6 @@ def LayerNorm(x, gamma=None, beta=None):
 
     return normalized
 
-
 def LayerNorm_1(x, gamma=None, beta=None):
     """
     NOTE:
@@ -434,7 +452,6 @@ def LayerNorm_1(x, gamma=None, beta=None):
         normalized += beta
 
     return normalized
-    
 
 def LayerNorm_2(x, gamma=None, beta=None):
     """
@@ -548,6 +565,32 @@ def FISR(number, iteration):
 
     return struct.unpack('f', struct.pack('I', result_bits))[0]
 
+def FISR_Q88(x_q8, iterations=2):
+    """ Fast Inverse Square Root in Q8.8 format """
+
+    # 初始猜測: 使用近似常數 (0x5F3759DF 對應浮點，這裡簡化成經驗初值)
+    # 為了 Q8.8，我們可以用 y = 1 / sqrt(x) ≈ 1.0 / sqrt(x)
+    # 假設輸入範圍 [0.25, 4.0]
+    # 初值可用: y0 = 1.0 (Q8.8 = 256)
+    y_q8 = 256  
+
+    one_point_five_q8 = int(1.5 * 256)  # 1.5 in Q8.8
+    half_q8 = 128                       # 0.5 in Q8.8
+
+    for _ in range(iterations):
+        # y^2
+        y2_q8 = (y_q8 * y_q8) >> 8
+        # x * y^2
+        xy2_q8 = (x_q8 * y2_q8) >> 8
+        # 0.5 * x * y^2
+        half_xy2_q8 = (half_q8 * xy2_q8) >> 8
+        # (1.5 - 0.5*x*y^2)
+        correction_q8 = one_point_five_q8 - half_xy2_q8
+        # y * correction
+        y_q8 = (y_q8 * correction_q8) >> 8
+
+    return np.int32(y_q8)
+
 
 def MSE(golden, prediction):
     """ Mean Squared Error (MSE) """
@@ -555,45 +598,52 @@ def MSE(golden, prediction):
     if len(golden) != len(prediction):
         raise ValueError("Length of golden and prediction must match")
 
-    mse = np.mean((golden - prediction) ** 2)
+    mse = np.mean((prediction - golden) ** 2)
 
     if mse == 0:
         accuracy = float('inf')  # Perfect match
         print("Perfect match!")
         loss = 0
     else:
-        accuracy = math.log10(1 / mse)
+        accuracy = math.log10(1 / mse)  # More larger is better
+        accuracy = mse                  # More smaller is better
         loss = mse
 
     return accuracy
 
 
 if __name__ == "__main__":
-    print("=== SFU testbench 2025.10.02 ===")
+    print("=== SFU testbench 2025.10.13 ===")
     
     ### ---------- softmax quantization ---------- ###
     QK   = np.load("SM_input_fix88.npy")
     mask = np.load("SM_mask.npy")
+    print(QK.shape, QK.dtype, mask.shape, mask.dtype)  # int16(1, 8, 3, 3)   bool1, 8, 3, 3)
+
+    # QK = np.random.uniform(-8, 8, size=(1, 8, 3, 3)).astype(np.int16)
+    # mask = np.random.randint(0, 2, size=(1, 8, 3, 3), dtype=bool)
+    # print(QK.shape, QK.dtype, mask.shape, mask.dtype)  # int16(1, 8, 3, 3)   bool1, 8, 3, 3)
+
 
     f_QK = fixQ8_to_float(QK)
     softmax_golden_result = softmax_golden(f_QK)
     # softmax_golden_result = float_to_q8_8(softmax_golden_result)
-    print("TEST")
-    # print(softmax_golden_result)
+    print(f"Golden: \n{softmax_golden_result}")
+
 
     softmax_result = softmax_quantized(QK, mask)
     f_softmax_result = fixQ8_to_float(softmax_result)
     # print(QK)
     # print(f_QK)
-    # print("TEST")
-    # print(f_softmax_result)
+    print(f"f_softmax_result: \n{f_softmax_result}")
     mes = MSE(softmax_golden_result, f_softmax_result)
     print(f"MSE: {mes}")
+
 
     # print(QK)
     cordic_softmax_result = softmax_quantized_cordic(QK, mask)
     f_cordic_softmax_result = fixQ8_to_float(cordic_softmax_result)
-    # print(f_cordic_softmax_result)
+    print(f"f_cordic_softmax_result: \n{f_cordic_softmax_result}")
     mes = MSE(softmax_golden_result, f_cordic_softmax_result)
     print(f"Cordic MSE: {mes}")
 
