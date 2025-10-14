@@ -469,14 +469,41 @@ def fisr_q8(x_q8, iterations=3):
     return int(round(y * 256))
 
 
+def fast_exp_schraudolph(x):
+    # constants
+    scale = 12102203  # (1 << 23) / ln(2)
+    bias  = 127 << 23 # exponent bias
+    i = int(x * scale + bias)
+    # reinterpret as float
+    return struct.unpack('f', struct.pack('I', i))[0]
+
+def fast_exp_schraudolph_q8(x_q88):
+    # constants
+    scale = 12102203  # (1 << 23) / ln(2)
+    bias  = 127 << 23 # exponent bias
+    x_real = x_q88 / 256.0
+
+    i = int(x_real * scale + bias)
+
+    # reinterpret as float
+    y = struct.unpack('f', struct.pack('I', i))[0]
+    exp_q88 = int(y * 256)
+    exp_q88 = max(0, min(exp_q88, 65535))
+
+    return exp_q88
+
+
 """
 Analyze function
 """
 def analyze_cordic(mode = 'cos_sin_float'):
     
+    """
+    Exp related
+    """
     if mode == 'exp_compare':
         """
-        Compare the approximation error between exp_normal and exp_Q88
+        Compare the approximation error between exp_normal, exp_Q88, exp_schraudolph
         """
         # 測試範圍
         x = np.linspace(-10, 0, 800)
@@ -493,9 +520,16 @@ def analyze_cordic(mode = 'cos_sin_float'):
             exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic_q8_exp(float_to_q8(t), log2e=1.5, iterations=8)
             errors_exp_Q88.append(abs(q8_to_float(exp1_cordic) - math.exp(t)))
 
+        # --- exp_schraudolph ---
+        errors_exp_schraudolph = []
+        for t in x:
+            exp_out = fast_exp_schraudolph_q8(float_to_q8(t))
+            errors_exp_schraudolph.append(abs(q8_to_float(exp_out) - math.exp(t)))
+
         # --- plot ---
         plt.plot(x, errors_exp_normal, label="exp_quantized error")
         plt.plot(x, errors_exp_Q88, label="cordic_q8_exp error")
+        plt.plot(x, errors_exp_schraudolph, label="exp_schraudolph error")
         plt.xlabel("x")
         plt.ylabel("Absolute Error")
         plt.title("exp approximation error comparison")
@@ -507,6 +541,8 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("[exp_quantized] avg error:", sum(errors_exp_normal)/len(errors_exp_normal))
         print("[cordic_q8_exp] max error:", max(errors_exp_Q88))
         print("[cordic_q8_exp] avg error:", sum(errors_exp_Q88)/len(errors_exp_Q88))
+        print("[cordic_q8_exp] max error:", max(errors_exp_schraudolph))
+        print("[cordic_q8_exp] avg error:", sum(errors_exp_schraudolph)/len(errors_exp_schraudolph))
 
     if mode == 'exp_normal':
         # convergence range: |theta| < atanh(1) ≈ 0.881
@@ -568,10 +604,11 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("exp 最大誤差:", max(errors_exp))
         print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
 
-    if mode == 'exp_flaot':
+    if mode == 'exp_cordic_float':
         # convergence range: |theta| < atanh(1) ≈ 0.881
         # x = np.linspace(-0.88, 0.88, 200)
-        x = np.linspace(-4, 2, 800)
+        # x = np.linspace(-4, 2, 800)
+        x = np.linspace(-10, 0, 800)
         # x = np.linspace(-50, 10, 800)
         cordic_exp_list = []
         # true_exp   = []
@@ -598,7 +635,39 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("exp 最大誤差:", max(errors_exp))
         print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
 
+    if mode == 'exp_schraudolph':
+        # convergence range: |theta| < atanh(1) ≈ 0.881
+        # x = np.linspace(-0.88, 0.88, 200)
+        x = np.linspace(-10, 0, 800)
+        # x = np.linspace(-50, 10, 800)
+        exp_list = []
+        # true_exp   = []
+        errors_exp = []
 
+        for t in x:
+            # exp1_cordic, exp2_cordic, theta_remain, convergence_list = cordic(1, 1, t, m=-1, iterations=32, mode='rotation')
+            print(f'\nCalculating exp({t}):')
+            exp1 = fast_exp_schraudolph_q8(float_to_q8(t))
+
+            exp_list.append(q8_to_float(exp1))
+            # true_sin.append(math.cos(t))
+            errors_exp.append(abs(q8_to_float(exp1) - math.exp(t)))
+            print(f't: {t}, exp_schraudolph: {q8_to_float(exp1)}, exp_true: {math.exp(t)}, error: {errors_exp[-1]}')
+        
+        plt.plot(x, errors_exp, label="exp error")
+        plt.xlabel("theta (rad)")
+        plt.ylabel("Absolute Error")
+        # plt.title("CORDIC exp error")
+        plt.title("exp error")
+        plt.legend()
+        plt.show()
+
+        print("exp 最大誤差:", max(errors_exp))
+        print("exp 平均誤差:", sum(errors_exp)/len(errors_exp))
+    
+    """
+    Reciprocal related
+    """
     if mode == 'reciprocal_compare':
         x = np.linspace(0.01, 1, 800)
 
@@ -710,6 +779,10 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("div 最大誤差:", max(errors_div))
         print("div 平均誤差:", sum(errors_div)/len(errors_div))
 
+    
+    """
+    SIN COS related
+    """
     if mode == 'cos_sin_float':
         # convergence range: -π/2 ~ π/2
         thetas = np.linspace(-math.pi/2, math.pi/2, 200)
@@ -745,13 +818,15 @@ def analyze_cordic(mode = 'cos_sin_float'):
         print("cos 最大誤差:", max(errors_cos))
         print("cos 平均誤差:", sum(errors_cos)/len(errors_cos))
 
+
 if __name__ == "__main__":
     print("=== Cordic testbench 2025.10.13 ===")
 
     # analyze_cordic(mode = 'cos_sin_float')
-    # analyze_cordic(mode = 'exp_float')
+    # analyze_cordic(mode = 'exp_cordic_float')
     # analyze_cordic(mode = 'exp_Q88')
     # analyze_cordic(mode = 'exp_normal')
+    # analyze_cordic(mode = 'exp_schraudolph')
     analyze_cordic(mode = 'exp_compare')
 
     # analyze_cordic(mode = 'reciprocal_flaot')
